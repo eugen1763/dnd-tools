@@ -15,31 +15,114 @@ export default function App() {
   const mode = useGameStore((s) => s.mode);
   const rows = useGameStore((s) => s.rows);
   const gameState = useGameStore((s) => s.gameState);
+  const setWsSend = useGameStore((s) => s.setWsSend);
+  const setConnectionStatus = useGameStore((s) => s.setConnectionStatus);
+  const setPlayerCount = useGameStore((s) => s.setPlayerCount);
+  const applyRemoteGuess = useGameStore((s) => s.applyRemoteGuess);
 
   const { guess, addGuessLetter, invalidGuess } = useGuess(secret, mode);
   const addGuessLetterRef = useRef(addGuessLetter);
   addGuessLetterRef.current = addGuessLetter;
 
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
   useEffect(() => {
     const path = window.location.pathname;
     const gameId = path.split('/').filter(Boolean).pop();
 
-    if (gameId) {
-      fetch(`/api/games/${gameId}`)
-        .then((res) => res.json())
-        .then((data) => {
-          initGame(data.secret, data.tries ?? 6);
-          setInitialized(true);
-        })
-        .catch(() => {
-          initGame(getRandomWord(), 6);
-          setInitialized(true);
-        });
-    } else {
+    if (!gameId) {
       initGame(getRandomWord(), 6);
       setInitialized(true);
+      return;
     }
-  }, [initGame]);
+
+    let cancelled = false;
+
+    fetch(`/api/games/${gameId}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        initGame(data.secret, data.tries ?? 6);
+        setInitialized(true);
+
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/${gameId}`;
+
+        function connect() {
+          if (cancelled) return;
+          const ws = new WebSocket(wsUrl);
+          wsRef.current = ws;
+
+          ws.onopen = () => {
+            if (cancelled) { ws.close(); return; }
+            setConnectionStatus(true);
+            setWsSend((data: string) => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(data);
+              }
+            });
+          };
+
+          ws.onmessage = (event) => {
+            if (cancelled) return;
+            const data = JSON.parse(event.data);
+
+            switch (data.type) {
+              case 'state':
+                initGame(data.secret, data.tries);
+                for (const g of data.guesses) {
+                  applyRemoteGuess(g.guess, g.result);
+                }
+                setPlayerCount(data.playerCount);
+                break;
+
+              case 'guess_result':
+                applyRemoteGuess(data.guess, data.result);
+                setPlayerCount(data.playerCount);
+                break;
+
+              case 'player_count':
+                setPlayerCount(data.count);
+                break;
+
+              case 'error':
+                console.error('WS error:', data.message);
+                break;
+            }
+          };
+
+          ws.onclose = () => {
+            if (cancelled) return;
+            setConnectionStatus(false);
+            setWsSend(null);
+            wsRef.current = null;
+            reconnectTimerRef.current = setTimeout(connect, 3000);
+          };
+
+          ws.onerror = () => {
+            ws.close();
+          };
+        }
+
+        connect();
+      })
+      .catch(() => {
+        if (cancelled) return;
+        initGame(getRandomWord(), 6);
+        setInitialized(true);
+      });
+
+    return () => {
+      cancelled = true;
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+    };
+  }, [initGame, setWsSend, setConnectionStatus, setPlayerCount, applyRemoteGuess]);
 
   useEffect(() => {
     if (!initialized) return;

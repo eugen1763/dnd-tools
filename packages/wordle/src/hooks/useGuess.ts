@@ -6,7 +6,7 @@ import type { GameMode } from '../store';
 export function useGuess(secret: string, mode: GameMode) {
   const [guess, setGuess] = useState('');
   const [invalidGuess, setInvalidGuess] = useState(false);
-  const addGuess = useGameStore((s) => s.addGuess);
+  const submitGuess = useGameStore((s) => s.submitGuess);
   const gameState = useGameStore((s) => s.gameState);
 
   const addGuessLetter = useCallback(
@@ -24,7 +24,7 @@ export function useGuess(secret: string, mode: GameMode) {
           setTimeout(() => setInvalidGuess(false), 500);
           return;
         }
-        addGuess(guess);
+        submitGuess(guess);
         setGuess('');
         return;
       }
@@ -38,7 +38,7 @@ export function useGuess(secret: string, mode: GameMode) {
         setGuess((prev) => prev + key.toUpperCase());
       }
     },
-    [guess, secret, mode, gameState, addGuess],
+    [guess, secret, mode, gameState, submitGuess],
   );
 
   return { guess, addGuessLetter, setGuess, invalidGuess };

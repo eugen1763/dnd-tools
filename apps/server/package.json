@@ -8,10 +8,10 @@
     "start": "bun run src/index.ts"
   },
   "dependencies": {
-    "elysia": "^1.2.0",
     "@elysiajs/cors": "^1.2.0",
     "@elysiajs/static": "^1.2.0",
     "discord.js": "^14.18.0",
+    "elysia": "^1.2.0",
     "nanoid": "^5.0.0"
   },
   "devDependencies": {

@@ -19,6 +19,8 @@ function formatMode(mode: GameMode): string {
 export function Header({ mode }: HeaderProps) {
   const rows = useGameStore((s) => s.rows);
   const tries = useGameStore((s) => s.tries);
+  const connected = useGameStore((s) => s.connected);
+  const playerCount = useGameStore((s) => s.playerCount);
 
   return (
     <header className="flex items-center justify-between w-full max-w-lg mx-auto px-2 py-4 border-b border-zinc-800">
@@ -26,6 +28,14 @@ export function Header({ mode }: HeaderProps) {
         Wordle
       </h1>
       <div className="flex items-center gap-3">
+        <span className="flex items-center gap-1.5 text-xs font-medium">
+          <span className={`w-2 h-2 rounded-full ${
+            connected ? 'bg-green-500' : 'bg-red-500'
+          }`} />
+          <span className="text-zinc-400">
+            {connected ? `${playerCount} player${playerCount !== 1 ? 's' : ''}` : 'Offline'}
+          </span>
+        </span>
         <span className="text-xs font-medium uppercase tracking-wider text-zinc-400 bg-zinc-800 px-2.5 py-1 rounded">
           {formatMode(mode)}
         </span>
