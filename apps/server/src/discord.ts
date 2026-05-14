@@ -6,6 +6,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const command = new SlashCommandBuilder()
   .setName('game')
   .setDescription('DnD game commands')
+  .setDMPermission(true)
   .addSubcommand(sub => sub
     .setName('create')
     .setDescription('Create a new game')
