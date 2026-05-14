@@ -1,0 +1,9 @@
+{
+  "name": "dnd-tools",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "dev:wordle": "cd packages/wordle && bun run dev",
+    "build:wordle": "cd packages/wordle && bun run build"
+  }
+}
