@@ -31,12 +31,21 @@ const command = new SlashCommandBuilder()
 
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user?.tag}`);
-  try {
-    await client.application?.commands.create(command);
-    console.log('Slash commands registered');
-  } catch (err) {
-    console.error('Failed to register slash commands:', err);
+
+  // Register globally for future guilds (takes up to 1h)
+  await client.application?.commands.create(command);
+
+  // Also register in every guild the bot is in (instant)
+  for (const guild of client.guilds.cache.values()) {
+    try {
+      await guild.commands.create(command);
+      console.log(`Registered in guild: ${guild.name}`);
+    } catch (err) {
+      console.error(`Failed to register in guild ${guild.name}:`, err);
+    }
   }
+
+  console.log('Slash commands registered');
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -45,6 +54,9 @@ client.on('interactionCreate', async (interaction) => {
 
   const subcommand = interaction.options.getSubcommand();
   if (subcommand !== 'create') return;
+
+  // Defer immediately — gives us 15 min to respond (vs 3 sec without)
+  await interaction.deferReply();
 
   const type = interaction.options.getString('type', true);
   const secret = interaction.options.getString('secret', true);
@@ -59,7 +71,7 @@ client.on('interactionCreate', async (interaction) => {
 
     if (!res.ok) {
       const text = await res.text();
-      await interaction.reply({ content: `Failed to create game: ${text}`, ephemeral: true });
+      await interaction.editReply({ content: `Failed to create game: ${text}` });
       return;
     }
 
@@ -77,9 +89,9 @@ client.on('interactionCreate', async (interaction) => {
       )
       .setFooter({ text: 'Share this link with your players!' });
 
-    await interaction.reply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [embed] });
   } catch (err) {
-    await interaction.reply({ content: 'Failed to create game. Is the server running?', ephemeral: true });
+    await interaction.editReply({ content: 'Failed to create game. Is the server running?' });
   }
 });
 
