@@ -22,17 +22,14 @@ export function WordRow({ guess = '', result, invalidGuess, length }: WordRowPro
       {Array.from({ length }).map((_, i) => {
         const char = guess[i] || '';
         const hasResult = result && result[i] !== undefined;
-        const style = hasResult ? stateStyles[result![i]] : '';
+        const stateStyle = hasResult ? stateStyles[result![i]] : '';
         const filled = char !== '';
+        const baseStyle = filled && !hasResult ? 'border-zinc-600 bg-zinc-800' : 'border-zinc-700';
 
         return (
           <div
             key={i}
-            className={`w-14 h-14 flex items-center justify-center text-2xl font-bold border-2 rounded transition-all duration-300 ${
-              filled
-                ? 'border-zinc-600 bg-zinc-800'
-                : 'border-zinc-700'
-            } ${style || (filled ? '' : '')}`}
+            className={`w-14 h-14 flex items-center justify-center text-2xl font-bold border-2 rounded transition-all duration-300 ${baseStyle} ${stateStyle}`}
             style={{
               perspective: '1000px',
               transformStyle: 'preserve-3d',
