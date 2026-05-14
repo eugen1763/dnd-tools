@@ -73,7 +73,7 @@ client.on('interactionCreate', async (interaction) => {
       .addFields(
         { name: 'Mode', value: mode, inline: true },
         { name: 'Tries', value: String(tries ?? 6), inline: true },
-        { name: 'Link', value: `http://localhost:3000${game.url}` }
+        { name: 'Link', value: `https://0x1763.dev${game.url}` }
       )
       .setFooter({ text: 'Share this link with your players!' });
 

@@ -1,5 +1,3 @@
-import { useGameStore } from '../store';
-import { LetterState } from '../word-utils';
 import type { GameMode } from '../store';
 
 interface KeyboardProps {
@@ -27,11 +25,6 @@ const MIXED_ROWS = [
   ['Enter', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', 'Backspace'],
 ];
 
-const stateStyles: Record<LetterState, string> = {
-  [LetterState.Miss]: 'bg-zinc-700 text-zinc-400',
-  [LetterState.Present]: 'bg-amber-500 text-white',
-  [LetterState.Match]: 'bg-emerald-500 text-white',
-};
 
 function getLayout(mode: GameMode): string[][] {
   switch (mode) {
@@ -45,7 +38,6 @@ function getLayout(mode: GameMode): string[][] {
 }
 
 export function Keyboard({ onKeyPress, mode }: KeyboardProps) {
-  const keyboardLetterState = useGameStore((s) => s.keyboardLetterState);
   const layout = getLayout(mode);
 
   return (
@@ -54,8 +46,6 @@ export function Keyboard({ onKeyPress, mode }: KeyboardProps) {
         <div key={ri} className="flex gap-1.5 justify-center">
           {row.map((key) => {
             const isSpecial = key === 'Enter' || key === 'Backspace';
-            const state = keyboardLetterState[key];
-            const stateStyle = state !== undefined ? stateStyles[state] : 'bg-zinc-600 text-zinc-200';
 
             return (
               <button
@@ -63,7 +53,7 @@ export function Keyboard({ onKeyPress, mode }: KeyboardProps) {
                 onClick={() => onKeyPress(key)}
                 className={`flex items-center justify-center rounded font-semibold transition-colors duration-150 active:scale-95 ${
                   isSpecial ? 'px-3 min-w-[4rem] text-xs' : 'w-10'
-                } h-14 ${stateStyle} hover:brightness-110`}
+                } h-14 bg-zinc-600 text-zinc-200 hover:brightness-110`}
                 style={{ fontFamily: 'Geist Sans, sans-serif' }}
               >
                 {key === 'Backspace' ? '⌫' : key}
