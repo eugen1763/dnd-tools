@@ -33,8 +33,72 @@ import {
 } from './music-player';
 import { downloadVideo, downloadPlaylist, DownloadResult, parseYouTubeUrl } from './youtube';
 import { join } from 'path';
+import { nanoid } from 'nanoid';
 
 const MUSIC_DIR = join(import.meta.dir, '../music/tracks');
+
+// Download progress tracking
+interface DownloadJob {
+  id: string;
+  status: 'queued' | 'downloading' | 'processing' | 'completed' | 'error';
+  progress: number;
+  message: string;
+  trackTitle?: string;
+  trackCount?: number;
+  currentTrack?: number;
+  error?: string;
+  type: 'video' | 'playlist';
+  timestamp: number;
+}
+
+const downloadJobs = new Map<string, DownloadJob>();
+
+function cleanStaleJobs() {
+  const now = Date.now();
+  for (const [id, job] of downloadJobs) {
+    if (now - job.timestamp > 30 * 60 * 1000) downloadJobs.delete(id);
+  }
+}
+
+function createJob(type: 'video' | 'playlist', msg: string): string {
+  cleanStaleJobs();
+  const id = nanoid(16);
+  downloadJobs.set(id, { id, status: 'queued', progress: 0, message: msg, type, timestamp: Date.now() });
+  return id;
+}
+
+function updateJob(id: string, upd: Partial<DownloadJob>) {
+  const job = downloadJobs.get(id);
+  if (job) Object.assign(job, upd, { timestamp: Date.now() });
+}
+
+/** Parse yt-dlp percentage from stderr */
+function parseProgressPct(text: string): number | null {
+  const m = text.match(/(\d+\.?\d*)%/);
+  return m ? parseFloat(m[1]) : null;
+}
+
+async function runDownload(jobId: string, url: string, category: string | undefined, isPlaylist: boolean) {
+  updateJob(jobId, { status: 'downloading', progress: 0, message: 'Starting download...' });
+  try {
+    if (isPlaylist) {
+      const result = await downloadPlaylist(url, (idx, total, title) => {
+        updateJob(jobId, { progress: Math.round((idx / total) * 100), message: `Downloading ${idx}/${total}`, trackTitle: title || undefined, trackCount: total, currentTrack: idx });
+      });
+      const tracks = addTracks(result.tracks.map(t => ({ id: t.id, title: t.title, url: t.url, duration: t.duration, filename: t.filename })), category || result.playlistTitle || 'Playlists');
+      updateJob(jobId, { status: 'completed', progress: 100, message: `Downloaded ${tracks.length} tracks`, trackCount: tracks.length });
+    } else {
+      const result = await downloadVideo(url, (line) => {
+        const pct = parseProgressPct(line);
+        if (pct !== null) updateJob(jobId, { status: 'downloading', progress: Math.round(pct), message: pct < 100 ? `Downloading... ${Math.round(pct)}%` : 'Processing audio...' });
+      });
+      addTrack({ id: result.id, title: result.title, url: result.url, duration: result.duration, filename: result.filename, category: category || 'uncategorized' });
+      updateJob(jobId, { status: 'completed', progress: 100, message: `Downloaded "${result.title}"`, trackTitle: result.title });
+    }
+  } catch (err) {
+    updateJob(jobId, { status: 'error', error: err instanceof Error ? err.message : String(err), message: 'Download failed' });
+  }
+}
 
 function trackToResponse(t: Track)  {
   return {
@@ -109,7 +173,7 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
 
   // === Download & Add ===
 
-  // Download a YouTube URL (video or playlist)
+  // Start a download (returns job ID for progress polling)
   .post('/download', async ({ body, headers }) => {
     const { url, category } = body as { url: string; category?: string };
     const token = headers['x-control-token'];
@@ -118,53 +182,20 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
 
     try {
       const parsed = parseYouTubeUrl(url);
-
-      if (parsed.type === 'playlist') {
-        const result = await downloadPlaylist(url, (idx, total, title) => {
-          console.log(`[Download] [${idx}/${total}] ${title}`);
-        });
-
-        const tracks = addTracks(
-          result.tracks.map(t => ({
-            id: t.id,
-            title: t.title,
-            url: t.url,
-            duration: t.duration,
-            filename: t.filename,
-          })),
-          category || result.playlistTitle || 'Playlists'
-        );
-
-        return {
-          ok: true,
-          type: 'playlist',
-          playlistTitle: result.playlistTitle,
-          tracks: tracks.map(trackToResponse),
-        };
-      } else {
-        // Single video
-        const result = await downloadVideo(url, (line) => {
-          // Progress logging
-          if (line.includes('%')) {
-            const match = line.match(/(\d+\.?\d*)%/);
-            if (match) console.log(`[Download] ${match[1]}%`);
-          }
-        });
-
-        const track = addTrack({
-          id: result.id,
-          title: result.title,
-          url: result.url,
-          duration: result.duration,
-          filename: result.filename,
-          category: category || 'uncategorized',
-        });
-
-        return { ok: true, type: 'track', track: trackToResponse(track) };
-      }
+      const isPlaylist = parsed.type === 'playlist';
+      const jobId = createJob(isPlaylist ? 'playlist' : 'video', 'Starting download...');
+      runDownload(jobId, url, category || undefined, isPlaylist); // fire & forget
+      return { ok: true, jobId, type: isPlaylist ? 'playlist' : 'track' };
     } catch (err) {
-      return { error: `Download failed: ${err instanceof Error ? err.message : String(err)}` };
+      return { error: `Failed to start download: ${err instanceof Error ? err.message : String(err)}` };
     }
+  })
+
+  // Poll download progress
+  .get('/download/progress/:jobId', ({ params: { jobId } }) => {
+    const job = downloadJobs.get(jobId);
+    if (!job) return { error: 'Job not found' };
+    return { ok: true, job: { id: job.id, status: job.status, progress: job.progress, message: job.message, trackTitle: job.trackTitle, trackCount: job.trackCount, currentTrack: job.currentTrack, error: job.error, type: job.type } };
   })
 
   // === Queue Management ===

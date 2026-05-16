@@ -978,9 +978,9 @@ confirmDownload.onclick = async () => {
   if (!url) { showToast('Please enter a YouTube URL', 3000); return; }
 
   confirmDownload.disabled = true;
-  confirmDownload.textContent = 'Downloading...';
+  confirmDownload.textContent = 'Starting...';
   downloadProgress.style.display = 'block';
-  progressText.textContent = 'Downloading...';
+  progressText.innerHTML = 'Starting download...<div class="progress-bar" style="margin-top:8px;height:6px"><div class="progress-bar-fill" id="dlProgressFill" style="width:0%;background:var(--accent);height:100%;border-radius:3px;transition:width .3s"></div></div>';
 
   try {
     const res = await api('/download', {
@@ -989,12 +989,44 @@ confirmDownload.onclick = async () => {
 
     if (res.error) {
       showToast(`Download failed: ${res.error}`, 5000);
-    } else {
-      const trackCount = res.type === 'playlist' ? res.tracks.length : 1;
-      showToast(`Downloaded ${trackCount} track(s) successfully!`, 3000);
-      addModal.classList.remove('open');
-      await fetchLibrary();
-      await pollState();
+      return;
+    }
+
+    const jobId = res.jobId;
+    confirmDownload.textContent = 'Downloading...';
+
+    // Poll for progress
+    let done = false;
+    while (!done) {
+      await new Promise(r => setTimeout(r, 500));
+      const prog = await api(`/download/progress/${jobId}`);
+      if (prog.error) {
+        showToast('Lost track of download job', 5000);
+        break;
+      }
+
+      const j = prog.job;
+      const bar = document.getElementById('dlProgressFill');
+      if (bar) bar.style.width = `${j.progress}%`;
+
+      if (j.type === 'playlist' && j.currentTrack && j.trackCount) {
+        progressText.innerHTML = `${j.message} &mdash; Track ${j.currentTrack}/${j.trackCount}<div class="progress-bar" style="margin-top:8px;height:6px"><div class="progress-bar-fill" style="width:${j.progress}%;background:var(--accent);height:100%;border-radius:3px;transition:width .3s"></div></div>`;
+      } else {
+        progressText.innerHTML = `${j.message}<div class="progress-bar" style="margin-top:8px;height:6px"><div class="progress-bar-fill" style="width:${j.progress}%;background:var(--accent);height:100%;border-radius:3px;transition:width .3s"></div></div>`;
+      }
+
+      if (j.status === 'completed') {
+        done = true;
+        progressText.innerHTML = `<span style="color:var(--accent)">✓ ${j.message}</span>`;
+        await new Promise(r => setTimeout(r, 800));
+        showToast(`Downloaded successfully!`, 3000);
+        addModal.classList.remove('open');
+        await fetchLibrary();
+        await pollState();
+      } else if (j.status === 'error') {
+        done = true;
+        showToast(`Download failed: ${j.error}`, 5000);
+      }
     }
   } catch (err) {
     showToast(`Download failed: ${err.message}`, 5000);
