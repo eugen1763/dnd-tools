@@ -83,6 +83,8 @@ export async function joinAndStartSession(
     channelId: channel.id,
     guildId: channel.guildId,
     adapterCreator: channel.guild.voiceAdapterCreator,
+    selfDeaf: false,
+    selfMute: false,
   });
 
   // Wait for the connection to be ready (up to 15s)
