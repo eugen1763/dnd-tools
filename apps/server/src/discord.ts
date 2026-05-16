@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, GuildMember, VoiceChannel } from 'discord.js';
+import { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, GuildMember, VoiceChannel, MessageFlags } from 'discord.js';
 import { DISCORD_TOKEN, MUSIC_CONTROL_BASE_URL } from './env';
 import { joinAndStartSession, leaveSession, getSession, PlayerState } from './music-player';
 
@@ -194,30 +194,26 @@ async function handleMusicCommand(interaction: any) {
 }
 
 async function handleMusicStart(interaction: any, member: GuildMember) {
-  await interaction.deferReply({ flags: 64 }).catch(() => {});
-
-  // Check if user is in a voice channel
-  if (!member.voice.channel) {
-    await interaction.editReply({
-      content: '❌ You must be in a voice channel to start music!',
-    }).catch(() => {});
+  // Check user is in voice first
+  if (!member || !member.voice || !member.voice.channel) {
+    await interaction.reply({ content: '❌ You must be in a voice channel to start music!', flags: MessageFlags.Ephemeral }).catch(() => {});
     return;
   }
 
   const channel = member.voice.channel as VoiceChannel;
 
-  // Check if there's already a session in this guild
+  // Check for existing session
   const existing = getSession(channel.guild.id);
   if (existing && existing.adminUserId !== member.id) {
-    // If the current admin is still in voice, deny, otherwise auto-replace
     const adminMember = await channel.guild.members.fetch(existing.adminUserId).catch(() => null);
     if (adminMember && adminMember.voice.channelId === existing.voiceChannelId) {
-      await interaction.editReply({
-        content: '❌ Another admin is already controlling music. They must use `/music stop` first.',
-      }).catch(() => {});
+      await interaction.reply({ content: '❌ Another admin is already controlling music. They must use `/music stop` first.', flags: MessageFlags.Ephemeral }).catch(() => {});
       return;
     }
   }
+
+  // Reply immediately — this gives us 15 min to do the slow work
+  await interaction.reply({ content: '🔌 Joining voice channel...', flags: MessageFlags.Ephemeral }).catch(() => {});
 
   try {
     const { token, state } = await joinAndStartSession(member, channel);
@@ -250,28 +246,23 @@ async function handleMusicStart(interaction: any, member: GuildMember) {
 }
 
 async function handleMusicStop(interaction: any, member: GuildMember) {
-  await interaction.deferReply({ flags: 64 }).catch(() => {});
-
   const guildId = interaction.guildId as string;
   const session = getSession(guildId);
 
   if (!session) {
-    await interaction.editReply({
-      content: '❌ No active music session in this server.',
-    }).catch(() => {});
+    await interaction.reply({ content: '❌ No active music session in this server.', flags: MessageFlags.Ephemeral }).catch(() => {});
     return;
   }
 
-  // Only the admin who started the session can stop it, or server admins
   const isAdmin = session.adminUserId === member.id;
   const isMod = member.permissions?.has('Administrator') || member.permissions?.has('ManageGuild');
 
   if (!isAdmin && !isMod) {
-    await interaction.editReply({
-      content: '❌ Only the session admin or server moderators can stop the music.',
-    }).catch(() => {});
+    await interaction.reply({ content: '❌ Only the session admin or server moderators can stop the music.', flags: MessageFlags.Ephemeral }).catch(() => {});
     return;
   }
+
+  await interaction.reply({ content: '🛑 Leaving voice channel...', flags: MessageFlags.Ephemeral }).catch(() => {});
 
   try {
     await leaveSession(guildId);
