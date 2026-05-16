@@ -44,6 +44,7 @@ const sessions = new Map<string, PlayerState>();
 const connections = new Map<string, VoiceConnection>();
 const players = new Map<string, AudioPlayer>();
 const ffmpegProcesses = new Map<string, any>(); // guildId -> ChildProcess
+let seekingGuildId: string | null = null; // suppress auto-advance during seeks
 const controlTokens = new Map<string, string>(); // token -> guildId
 
 export function generateControlToken(guildId: string): string {
@@ -138,6 +139,8 @@ export async function joinAndStartSession(
   // Handle player state changes
   player.on(AudioPlayerStatus.Idle, () => {
     ffmpegProcesses.delete(guildId);
+    // Don't auto-advance if we're in the middle of a seek
+    if (seekingGuildId === guildId) return;
     if (state.loop && state.currentIndex >= 0 && state.currentIndex < state.queue.length) {
       // Re-play the current track
       playTrackInSession(guildId, state.queue[state.currentIndex]);
@@ -348,7 +351,11 @@ export function seek(guildId: string, position: number): boolean {
     ffmpegProcesses.delete(guildId);
   }
 
+  // Set flag so Idle handler doesn't auto-advance to next track
+  seekingGuildId = guildId;
   player.stop();
+  seekingGuildId = null;
+
   return playTrackInSession(guildId, session.queue[session.currentIndex], position);
 }
 
