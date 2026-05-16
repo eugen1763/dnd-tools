@@ -138,12 +138,12 @@ export async function joinAndStartSession(
 
   // Handle player state changes
   player.on(AudioPlayerStatus.Idle, () => {
-    ffmpegProcesses.delete(guildId);
-    // Don't auto-advance if we're in the middle of a seek
+    // Don't auto-advance or clean up ffmpeg ref if we're seeking
     if (seekingGuildId === guildId) {
       seekingGuildId = null;
       return;
     }
+    ffmpegProcesses.delete(guildId);
     if (state.loop && state.currentIndex >= 0 && state.currentIndex < state.queue.length) {
       // Re-play the current track
       playTrackInSession(guildId, state.queue[state.currentIndex]);
