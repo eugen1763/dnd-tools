@@ -1034,8 +1034,6 @@ progressBar.onclick = (e) => {
   const duration = state.queue[state.currentIndex].duration || 0;
   progressFill.style.width = `${pct * 100}%`;
   currentTime.textContent = formatTime(duration * pct);
-  // We can't actually seek with the current FFmpeg setup, so just showToast
-  showToast('Seeking not supported with current player');
 };
 
 // === Init ===
