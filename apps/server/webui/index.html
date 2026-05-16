@@ -523,8 +523,11 @@ function api(path, opts = {}) {
   if (opts.body && !(opts.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json';
   }
+  // Default to POST when sending a body, unless method explicitly set
+  const method = opts.method || (opts.body ? 'POST' : 'GET');
   return fetch(`${API_BASE}${path}`, {
     ...opts,
+    method,
     headers,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   }).then(r => r.json());
