@@ -140,7 +140,10 @@ export async function joinAndStartSession(
   player.on(AudioPlayerStatus.Idle, () => {
     ffmpegProcesses.delete(guildId);
     // Don't auto-advance if we're in the middle of a seek
-    if (seekingGuildId === guildId) return;
+    if (seekingGuildId === guildId) {
+      seekingGuildId = null;
+      return;
+    }
     if (state.loop && state.currentIndex >= 0 && state.currentIndex < state.queue.length) {
       // Re-play the current track
       playTrackInSession(guildId, state.queue[state.currentIndex]);
@@ -351,11 +354,11 @@ export function seek(guildId: string, position: number): boolean {
     ffmpegProcesses.delete(guildId);
   }
 
-  // Set flag so Idle handler doesn't auto-advance to next track
+  // Set flag — Idle handler will clear it and skip auto-advance
   seekingGuildId = guildId;
-  player.stop();
-  seekingGuildId = null;
 
+  // Don't call player.stop() — it fires Idle async. Just play the new resource.
+  // player.play() replaces any currently playing resource.
   return playTrackInSession(guildId, session.queue[session.currentIndex], position);
 }
 
