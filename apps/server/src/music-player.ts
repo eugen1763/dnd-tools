@@ -34,18 +34,16 @@ export interface PlayerState {
   queue: QueueItem[];
   currentIndex: number;
   isPlaying: boolean;
-  volume: number; // always 1.0
+  volume: number;
   loop: boolean;
   shuffle: boolean;
 }
 
-// Active sessions per guild
 const sessions = new Map<string, PlayerState>();
 const connections = new Map<string, VoiceConnection>();
 const players = new Map<string, AudioPlayer>();
-const ffmpegProcesses = new Map<string, any>(); // guildId -> ChildProcess
-let seekingGuildId: string | null = null; // suppress auto-advance during seeks
-const controlTokens = new Map<string, string>(); // token -> guildId
+const ffmpegProcesses = new Map<string, any>();
+const controlTokens = new Map<string, string>();
 
 export function generateControlToken(guildId: string): string {
   const token = nanoid(32);
@@ -76,11 +74,8 @@ export async function joinAndStartSession(
   channel: VoiceChannel,
 ): Promise<{ token: string; state: PlayerState }> {
   const guildId = channel.guild.id;
-
-  // Leave any existing session first
   await leaveSession(guildId);
 
-  // Create connection
   const connection = joinVoiceChannel({
     channelId: channel.id,
     guildId: channel.guildId,
@@ -89,7 +84,6 @@ export async function joinAndStartSession(
     selfMute: false,
   });
 
-  // Wait for the connection to be ready (up to 15s)
   try {
     await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
   } catch {
@@ -98,9 +92,7 @@ export async function joinAndStartSession(
   }
 
   const player = createAudioPlayer({
-    behaviors: {
-      noSubscriber: NoSubscriberBehavior.Play,
-    },
+    behaviors: { noSubscriber: NoSubscriberBehavior.Play },
   });
 
   connection.subscribe(player);
@@ -123,7 +115,6 @@ export async function joinAndStartSession(
   connections.set(guildId, connection);
   players.set(guildId, player);
 
-  // Handle voice state changes
   connection.on(VoiceConnectionStatus.Disconnected, async () => {
     try {
       await Promise.race([
@@ -131,21 +122,13 @@ export async function joinAndStartSession(
         entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
       ]);
     } catch {
-      // Connection is dead, clean up
       cleanupSession(guildId);
     }
   });
 
-  // Handle player state changes
   player.on(AudioPlayerStatus.Idle, () => {
-    // Don't auto-advance or clean up ffmpeg ref if we're seeking
-    if (seekingGuildId === guildId) {
-      seekingGuildId = null;
-      return;
-    }
     ffmpegProcesses.delete(guildId);
     if (state.loop && state.currentIndex >= 0 && state.currentIndex < state.queue.length) {
-      // Re-play the current track
       playTrackInSession(guildId, state.queue[state.currentIndex]);
     } else if (state.queue.length > 0) {
       playNext(guildId);
@@ -154,7 +137,6 @@ export async function joinAndStartSession(
     }
   });
 
-  // Handle player errors
   player.on('error', (error) => {
     console.error(`Audio player error in guild ${guildId}:`, error);
     playNext(guildId);
@@ -164,53 +146,33 @@ export async function joinAndStartSession(
 }
 
 export async function leaveSession(guildId: string): Promise<void> {
-  const player = players.get(guildId);
-  if (player) {
-    player.stop();
-    players.delete(guildId);
-  }
-
   const ffmpeg = ffmpegProcesses.get(guildId);
-  if (ffmpeg) {
-    ffmpeg.kill();
-    ffmpegProcesses.delete(guildId);
-  }
+  if (ffmpeg) { ffmpeg.kill(); ffmpegProcesses.delete(guildId); }
+
+  const player = players.get(guildId);
+  if (player) { player.stop(); players.delete(guildId); }
 
   const connection = connections.get(guildId);
-  if (connection) {
-    connection.destroy();
-    connections.delete(guildId);
-  }
+  if (connection) { connection.destroy(); connections.delete(guildId); }
 
   const session = sessions.get(guildId);
-  if (session) {
-    invalidateToken(session.controlToken);
-    sessions.delete(guildId);
-  }
+  if (session) { invalidateToken(session.controlToken); sessions.delete(guildId); }
 }
 
 function cleanupSession(guildId: string): void {
+  ffmpegProcesses.delete(guildId);
   players.delete(guildId);
   connections.delete(guildId);
   const session = sessions.get(guildId);
-  if (session) {
-    invalidateToken(session.controlToken);
-    sessions.delete(guildId);
-  }
+  if (session) { invalidateToken(session.controlToken); sessions.delete(guildId); }
 }
 
 export function setQueue(guildId: string, trackIds: string[]): void {
   const session = sessions.get(guildId);
   if (!session) return;
-
   session.queue = trackIds.map(id => {
     const track = getTrack(id);
-    return {
-      trackId: id,
-      title: track?.title || 'Unknown Track',
-      duration: track?.duration || 0,
-      requestedBy: session.adminUserId,
-    };
+    return { trackId: id, title: track?.title || 'Unknown Track', duration: track?.duration || 0, requestedBy: session.adminUserId };
   });
   session.currentIndex = 0;
 }
@@ -218,14 +180,8 @@ export function setQueue(guildId: string, trackIds: string[]): void {
 export function addToQueue(guildId: string, trackId: string): void {
   const session = sessions.get(guildId);
   if (!session) return;
-
   const track = getTrack(trackId);
-  session.queue.push({
-    trackId,
-    title: track?.title || 'Unknown Track',
-    duration: track?.duration || 0,
-    requestedBy: session.adminUserId,
-  });
+  session.queue.push({ trackId, title: track?.title || 'Unknown Track', duration: track?.duration || 0, requestedBy: session.adminUserId });
 }
 
 export function clearQueue(guildId: string): void {
@@ -234,7 +190,6 @@ export function clearQueue(guildId: string): void {
   session.queue = [];
   session.currentIndex = -1;
   session.isPlaying = false;
-
   const player = players.get(guildId);
   if (player) player.stop();
 }
@@ -243,67 +198,45 @@ export function removeFromQueue(guildId: string, index: number): boolean {
   const session = sessions.get(guildId);
   if (!session || index < 0 || index >= session.queue.length) return false;
   session.queue.splice(index, 1);
-  if (session.currentIndex >= index) {
-    session.currentIndex--;
-  }
+  if (session.currentIndex >= index) session.currentIndex--;
   return true;
 }
 
 export function playTrackById(guildId: string, trackId: string): boolean {
   const session = sessions.get(guildId);
   if (!session) return false;
-
-  // Find or add to queue
   const existingIdx = session.queue.findIndex(q => q.trackId === trackId);
   if (existingIdx >= 0) {
     session.currentIndex = existingIdx;
   } else {
     const track = getTrack(trackId);
     if (!track) return false;
-    session.queue.push({
-      trackId,
-      title: track.title,
-      duration: track.duration,
-      requestedBy: session.adminUserId,
-    });
+    session.queue.push({ trackId, title: track.title, duration: track.duration, requestedBy: session.adminUserId });
     session.currentIndex = session.queue.length - 1;
   }
-
   return playTrackInSession(guildId, session.queue[session.currentIndex]);
 }
 
 export function playNext(guildId: string): boolean {
   const session = sessions.get(guildId);
   if (!session || session.queue.length === 0) return false;
-
   if (session.shuffle) {
-    // Pick random track
-    const nextIdx = Math.floor(Math.random() * session.queue.length);
-    session.currentIndex = nextIdx;
+    session.currentIndex = Math.floor(Math.random() * session.queue.length);
   } else {
     session.currentIndex++;
     if (session.currentIndex >= session.queue.length) {
-      if (session.loop) {
-        session.currentIndex = 0;
-      } else {
-        session.isPlaying = false;
-        return false;
-      }
+      if (session.loop) { session.currentIndex = 0; }
+      else { session.isPlaying = false; return false; }
     }
   }
-
   return playTrackInSession(guildId, session.queue[session.currentIndex]);
 }
 
 export function playPrevious(guildId: string): boolean {
   const session = sessions.get(guildId);
   if (!session || session.queue.length === 0) return false;
-
   session.currentIndex--;
-  if (session.currentIndex < 0) {
-    session.currentIndex = session.queue.length - 1;
-  }
-
+  if (session.currentIndex < 0) session.currentIndex = session.queue.length - 1;
   return playTrackInSession(guildId, session.queue[session.currentIndex]);
 }
 
@@ -311,7 +244,6 @@ export function togglePlayPause(guildId: string): boolean {
   const session = sessions.get(guildId);
   const player = players.get(guildId);
   if (!session || !player) return false;
-
   if (player.state.status === AudioPlayerStatus.Playing) {
     player.pause();
     session.isPlaying = false;
@@ -321,7 +253,6 @@ export function togglePlayPause(guildId: string): boolean {
   } else if (session.queue.length > 0 && session.currentIndex >= 0) {
     return playTrackInSession(guildId, session.queue[session.currentIndex]);
   }
-
   return true;
 }
 
@@ -343,25 +274,28 @@ export function setShuffle(guildId: string, shuffle: boolean): void {
   session.shuffle = shuffle;
 }
 
+/**
+ * Seek to a position in the current track by killing the old ffmpeg
+ * and starting a new one at the given position. player.play() replaces
+ * the active resource cleanly — the old stream dying later is a no-op.
+ */
 export function seek(guildId: string, position: number): boolean {
   const session = sessions.get(guildId);
   const player = players.get(guildId);
   if (!session || !player || session.queue.length === 0 || session.currentIndex < 0) return false;
 
-  const ffmpeg = ffmpegProcesses.get(guildId);
-  if (ffmpeg) {
-    ffmpeg.kill();
-    ffmpegProcesses.delete(guildId);
-  }
+  // Kill old ffmpeg (its stream will end, but player will already have a new resource)
+  const old = ffmpegProcesses.get(guildId);
+  if (old) { old.kill(); ffmpegProcesses.delete(guildId); }
 
-  // Set flag — Idle handler will clear it and skip auto-advance
-  seekingGuildId = guildId;
-
-  // Don't call player.stop() — it fires Idle async. Just play the new resource.
-  // player.play() replaces any currently playing resource.
+  // Start new ffmpeg at position — player.play() replaces the current resource
   return playTrackInSession(guildId, session.queue[session.currentIndex], position);
 }
 
+/**
+ * Core playback function: spawns ffmpeg to decode audio, creates a resource,
+ * and plays it. Called both for new tracks and for seeks.
+ */
 function playTrackInSession(guildId: string, item: QueueItem, seekPosition?: number): boolean {
   const connection = connections.get(guildId);
   const player = players.get(guildId);
@@ -378,17 +312,28 @@ function playTrackInSession(guildId: string, item: QueueItem, seekPosition?: num
   }
 
   try {
-    // Use ffmpeg to decode any audio to raw PCM for Discord
-    const ffmpegArgs = [
-      ...(seekPosition ? ['-ss', String(seekPosition)] : []),
-      '-i', filePath,
-      ...(seekPosition ? ['-noaccurate_seek'] : []),
-      '-f', 's16le',          // raw PCM signed 16-bit little-endian
-      '-ar', '48000',         // Discord's sample rate
-      '-ac', '2',             // stereo
+    // Build ffmpeg args
+    const ffmpegArgs: string[] = [];
+
+    // For seeking: use fast input seek (before -i) which seeks to nearest keyframe,
+    // then follow with an output seek (after -i) for sample-accurate correction.
+    if (seekPosition !== undefined) {
+      ffmpegArgs.push('-ss', String(Math.max(0, seekPosition - 2))); // seek 2s before target
+    }
+
+    ffmpegArgs.push('-i', filePath);
+
+    if (seekPosition !== undefined) {
+      ffmpegArgs.push('-ss', '2'); // seek forward 2s for sample accuracy
+    }
+
+    ffmpegArgs.push(
+      '-f', 's16le',
+      '-ar', '48000',
+      '-ac', '2',
       '-loglevel', 'error',
       'pipe:1',
-    ];
+    );
 
     const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
     ffmpegProcesses.set(guildId, ffmpeg);
@@ -400,12 +345,12 @@ function playTrackInSession(guildId: string, item: QueueItem, seekPosition?: num
 
     resource.volume?.setVolume(session.volume);
 
+    // player.play() replaces the current resource. The old resource's stream
+    // dying later won't affect the player since it already has a new resource.
     player.play(resource);
     session.isPlaying = true;
 
-    ffmpeg.on('error', (err) => {
-      console.error('FFmpeg error:', err);
-    });
+    ffmpeg.on('error', (err) => console.error('FFmpeg error:', err));
 
     ffmpeg.stderr.on('data', (chunk: Buffer) => {
       const msg = chunk.toString().trim();
