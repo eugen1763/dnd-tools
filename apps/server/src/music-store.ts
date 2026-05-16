@@ -18,6 +18,7 @@ export interface Track {
   filename: string;
   category: string;
   addedAt: string; // ISO date
+  favorite: boolean;
 }
 
 export interface Category {
@@ -73,7 +74,7 @@ export function getTrack(id: string): Track | undefined {
 }
 
 /** Add a track (from download) */
-export function addTrack(track: Omit<Track, 'category' | 'addedAt'> & { category?: string }): Track {
+export function addTrack(track: Omit<Track, 'category' | 'addedAt' | 'favorite'> & { category?: string }): Track {
   const lib = loadLibrary();
   const newTrack: Track = {
     id: track.id,
@@ -83,6 +84,7 @@ export function addTrack(track: Omit<Track, 'category' | 'addedAt'> & { category
     filename: track.filename,
     category: track.category || 'uncategorized',
     addedAt: new Date().toISOString(),
+    favorite: false,
   };
 
   lib.tracks.push(newTrack);
@@ -120,6 +122,7 @@ export function addTracks(
       ...t,
       category: categoryName,
       addedAt: new Date().toISOString(),
+      favorite: false,
     };
     lib.tracks.push(newTrack);
     cat.trackIds.push(newTrack.id);
@@ -196,4 +199,30 @@ export function moveTrack(trackId: string, newCategory: string): boolean {
 
   saveLibrary(lib);
   return true;
+}
+
+/** Toggle favorite status */
+export function toggleFavorite(trackId: string): Track | undefined {
+  const lib = loadLibrary();
+  const track = lib.tracks.find(t => t.id === trackId);
+  if (!track) return undefined;
+  track.favorite = !track.favorite;
+  saveLibrary(lib);
+  return track;
+}
+
+/** Get all favorite tracks */
+export function getFavoriteTracks(): Track[] {
+  return loadLibrary().tracks.filter(t => t.favorite);
+}
+
+/** Create a new empty category */
+export function createCategory(name: string): Category | undefined {
+  if (!name.trim()) return undefined;
+  const lib = loadLibrary();
+  if (lib.categories.find(c => c.name === name.trim())) return undefined;
+  const cat = { id: nanoid(8), name: name.trim(), trackIds: [] };
+  lib.categories.push(cat);
+  saveLibrary(lib);
+  return cat;
 }

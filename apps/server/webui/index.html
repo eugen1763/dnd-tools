@@ -144,8 +144,8 @@ input{font:inherit;color:inherit}
 }
 .track-item{
   display:grid;
-  grid-template-columns:32px 1fr 100px 40px;
-  gap:12px;
+  grid-template-columns:32px 1fr 100px 30px 30px;
+  gap:8px;
   padding:8px 12px;
   border-radius:var(--radius);
   cursor:pointer;
@@ -581,7 +581,7 @@ function renderCategories() {
   // Saved playlists (smart "categories" as playlists)
   const savedItem = document.createElement('div');
   savedItem.className = `sidebar-category${selectedCategoryId === '_saved' ? ' active' : ''}`;
-  savedItem.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg><span>Favorites</span><span class="count">0</span>`;
+  savedItem.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg><span>Favorites</span><span class="count">${allTracks.filter(t => t.favorite).length}</span>`;
   savedItem.onclick = () => { selectedCategoryId = '_saved'; renderCategories(); renderCurrentView(); };
   categoryList.appendChild(savedItem);
 
@@ -608,8 +608,7 @@ function renderLibrary() {
   let title = 'All Tracks';
 
   if (selectedCategoryId === '_saved') {
-    // Favorites - not yet implemented
-    tracks = [];
+    tracks = allTracks.filter(t => t.favorite);
     title = 'Favorites';
   } else if (selectedCategoryId) {
     const cat = allCategories.find(c => c.id === selectedCategoryId);
@@ -651,10 +650,16 @@ function renderLibrary() {
           <div class="meta">${escapeHtml(t.category || 'uncategorized')}</div>
         </div>
         <div class="track-duration">${formatTime(t.duration)}</div>
-        <div>
-          <button class="btn-icon add-queue-btn" title="Add to queue" style="width:28px;height:28px;color:var(--text-tertiary)" data-track-id="${t.id}">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/></svg>
+        <button class="btn-icon fav-btn" title="${t.favorite ? 'Remove from favorites' : 'Add to favorites'}" data-track-id="${t.id}" style="width:28px;height:28px;color:${t.favorite ? 'var(--accent)' : 'var(--text-tertiary)'}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="${t.favorite ? 'var(--accent)' : 'none'}" stroke="currentColor" stroke-width="2"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+        </button>
+        <div class="track-actions-col" style="position:relative">
+          <button class="btn-icon cat-btn" title="Move to category" data-track-id="${t.id}" style="width:28px;height:28px;color:var(--text-tertiary)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
           </button>
+          <div class="cat-dropdown" id="catDropdown-${t.id}" style="display:none;position:absolute;right:0;top:100%;background:var(--bg-elevated);border:1px solid var(--border-color);border-radius:var(--radius);padding:4px;z-index:50;min-width:160px;max-height:200px;overflow-y:auto">
+            ${allCategories.map(c => `<div class="cat-option" data-track-id="${t.id}" data-cat="${escapeHtml(c.name)}" style="padding:6px 10px;font-size:12px;cursor:pointer;border-radius:4px;color:var(--text-secondary)">${escapeHtml(c.name)}</div>`).join('')}
+          </div>
         </div>
       </div>`;
   }
@@ -664,6 +669,24 @@ function renderLibrary() {
   // Bind events
   viewContent.querySelectorAll('.play-icon-btn').forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); playTrack(btn.dataset.trackId); };
+  });
+  viewContent.querySelectorAll('.fav-btn').forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); toggleFav(btn.dataset.trackId); };
+  });
+  viewContent.querySelectorAll('.cat-btn').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const dropdown = document.getElementById('catDropdown-' + btn.dataset.trackId);
+      if (dropdown) dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+    };
+  });
+  viewContent.querySelectorAll('.cat-option').forEach(opt => {
+    opt.onclick = (e) => {
+      e.stopPropagation();
+      moveTrackCat(opt.dataset.trackId, opt.dataset.cat);
+      const dropdown = document.getElementById('catDropdown-' + opt.dataset.trackId);
+      if (dropdown) dropdown.style.display = 'none';
+    };
   });
   viewContent.querySelectorAll('.add-queue-btn').forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); addToQueue(btn.dataset.trackId); };
@@ -859,6 +882,38 @@ async function removeFromQueue(index) {
   }
 }
 
+async function toggleFav(trackId) {
+  const res = await api(`/tracks/${trackId}/favorite`, { method: 'POST' });
+  if (res.ok) {
+    await fetchLibrary();
+    renderCurrentView();
+  } else {
+    showToast(res.error || 'Failed', 3000);
+  }
+}
+
+async function moveTrackCat(trackId, category) {
+  const res = await api(`/tracks/${trackId}/move`, { body: { category } });
+  if (res.ok) {
+    await fetchLibrary();
+    renderCurrentView();
+  } else {
+    showToast(res.error || 'Failed', 3000);
+  }
+}
+
+async function createNewCategory() {
+  const name = prompt('Category name:');
+  if (!name || !name.trim()) return;
+  const res = await api('/categories/create', { body: { name: name.trim() } });
+  if (res.ok) {
+    await fetchLibrary();
+    renderCategories();
+  } else {
+    showToast(res.error || 'Failed to create category', 3000);
+  }
+}
+
 async function clearQueue() {
   const res = await api('/queue/clear', { method: 'POST' });
   if (res.ok) {
@@ -1025,6 +1080,12 @@ prevBtn.onclick = prevTrack;
 shuffleBtn.onclick = toggleShuffle;
 loopBtn.onclick = toggleLoop;
 clearQueueBtn.onclick = clearQueue;
+document.getElementById('newCategoryBtn').onclick = createNewCategory;
+
+// Close category dropdowns on outside click
+document.addEventListener('click', () => {
+  document.querySelectorAll('.cat-dropdown').forEach(d => d.style.display = 'none');
+});
 
 // Progress bar click to seek
 progressBar.onclick = async (e) => {

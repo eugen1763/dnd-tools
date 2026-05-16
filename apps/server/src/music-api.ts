@@ -10,6 +10,9 @@ import {
   renameCategory,
   deleteCategory,
   moveTrack,
+  toggleFavorite,
+  getFavoriteTracks,
+  createCategory,
   Track,
 } from './music-store';
 import {
@@ -86,7 +89,7 @@ async function runDownload(jobId: string, url: string, category: string | undefi
       const result = await downloadPlaylist(url, (idx, total, title) => {
         updateJob(jobId, { progress: Math.round((idx / total) * 100), message: `Downloading ${idx}/${total}`, trackTitle: title || undefined, trackCount: total, currentTrack: idx });
       });
-      const tracks = addTracks(result.tracks.map(t => ({ id: t.id, title: t.title, url: t.url, duration: t.duration, filename: t.filename })), category || result.playlistTitle || 'Playlists');
+      const tracks = addTracks(result.tracks.map(t => ({ id: t.id, title: t.title, url: t.url, duration: t.duration, filename: t.filename, favorite: false })), category || result.playlistTitle || 'Playlists');
       updateJob(jobId, { status: 'completed', progress: 100, message: `Downloaded ${tracks.length} tracks`, trackCount: tracks.length });
     } else {
       const result = await downloadVideo(url, (line) => {
@@ -109,6 +112,7 @@ function trackToResponse(t: Track)  {
     duration: t.duration,
     category: t.category,
     addedAt: t.addedAt,
+    favorite: t.favorite,
   };
 }
 
@@ -397,6 +401,41 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
 
     moveTrack(id, category);
     return { ok: true };
+  })
+
+  // Toggle favorite
+  .post('/tracks/:id/favorite', ({ params: { id }, headers }) => {
+    const token = headers['x-control-token'];
+    if (!token) return { error: 'Missing x-control-token header' };
+    const session = getSessionByToken(token);
+    if (!session) return { error: 'No active session' };
+
+    const track = toggleFavorite(id);
+    if (!track) return { error: 'Track not found' };
+    return { ok: true, track: trackToResponse(track) };
+  })
+
+  // Get favorites
+  .get('/tracks/favorites', ({ headers }) => {
+    const token = headers['x-control-token'];
+    if (!token) return { error: 'Missing x-control-token header' };
+
+    return { ok: true, tracks: getFavoriteTracks().map(trackToResponse) };
+  })
+
+  // Create category
+  .post('/categories/create', ({ body, headers }) => {
+    const token = headers['x-control-token'];
+    if (!token) return { error: 'Missing x-control-token header' };
+    const session = getSessionByToken(token);
+    if (!session) return { error: 'No active session' };
+
+    const { name } = body as { name: string };
+    if (!name) return { error: 'Missing name' };
+
+    const cat = createCategory(name);
+    if (!cat) return { error: 'Category already exists or invalid name' };
+    return { ok: true, category: cat };
   })
 
   // Rename category
