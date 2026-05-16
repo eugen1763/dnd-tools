@@ -76,6 +76,57 @@ client.once('ready', async () => {
   await setupCommands();
 });
 
+// Register commands when joining a new guild
+client.on('guildCreate', async (guild) => {
+  try {
+    const gameCommand = new SlashCommandBuilder()
+      .setName('game')
+      .setDescription('DnD game commands')
+      .setDMPermission(true)
+      .addSubcommand(sub => sub
+        .setName('create')
+        .setDescription('Create a new game')
+        .addStringOption(opt => opt
+          .setName('type')
+          .setDescription('Game type')
+          .setRequired(true)
+          .addChoices({ name: 'wordle', value: 'wordle' })
+        )
+        .addStringOption(opt => opt
+          .setName('secret')
+          .setDescription('The word/number to guess')
+          .setRequired(true)
+        )
+        .addIntegerOption(opt => opt
+          .setName('tries')
+          .setDescription('Number of allowed guesses')
+          .setRequired(false)
+          .setMinValue(1)
+          .setMaxValue(20)
+        )
+      );
+
+    const musicCommand = new SlashCommandBuilder()
+      .setName('music')
+      .setDescription('DnD session music controls')
+      .setDMPermission(false)
+      .addSubcommand(sub => sub
+        .setName('start')
+        .setDescription('Start music in your current voice channel')
+      )
+      .addSubcommand(sub => sub
+        .setName('stop')
+        .setDescription('Stop music and leave voice channel')
+      );
+
+    await guild.commands.create(gameCommand);
+    await guild.commands.create(musicCommand);
+    console.log(`Registered commands in new guild: ${guild.name} (${guild.id})`);
+  } catch (err) {
+    console.error(`Failed to register commands in new guild ${guild.id}:`, err);
+  }
+});
+
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
