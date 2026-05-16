@@ -6,9 +6,11 @@ import { readFileSync } from 'fs';
 import { createGame, getGame, addGuessToGame, LetterState, computeGuess } from './store';
 import { PORT } from './env';
 import { startBot } from './discord';
+import { musicApi } from './music-api';
 
 const wordleDist = path.join(import.meta.dir, '../../../packages/wordle/dist');
 const wordleHtml = readFileSync(path.join(wordleDist, 'index.html'), 'utf-8');
+const webUiDir = path.join(import.meta.dir, '../webui');
 
 const gameClients = new Map<string, Set<WebSocket>>();
 
@@ -31,6 +33,7 @@ const app = new Elysia()
       prefix: '/wordle'
     })
   )
+  .use(musicApi)
   .ws('/ws/:gameId', {
     open(ws) {
       const { gameId } = ws.data.params as { gameId: string };
@@ -115,8 +118,9 @@ const app = new Elysia()
         <body style="font-family:system-ui;display:grid;place-items:center;min-height:100vh;margin:0;background:#1a1a2e;color:#eee">
           <div style="text-align:center">
             <h1>DnD Tools</h1>
-            <p>Wordle game server</p>
+            <p>Wordle game server &amp; DnD Music Bot</p>
             <p><a href="/wordle" style="color:#57F287">Play Wordle</a></p>
+            <p><a href="/music" style="color:#1DB954">Music Control</a></p>
           </div>
         </body>
       </html>`,
@@ -138,6 +142,13 @@ const app = new Elysia()
   })
   .get('/wordle/*', () => {
     return new Response(wordleHtml, {
+      headers: { 'Content-Type': 'text/html' }
+    });
+  })
+  .get('/music', () => {
+    // Serve the music control UI
+    const musicHtml = readFileSync(path.join(webUiDir, 'index.html'), 'utf-8');
+    return new Response(musicHtml, {
       headers: { 'Content-Type': 'text/html' }
     });
   })

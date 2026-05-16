@@ -3,3 +3,8 @@ dist/
 *.local
 .env
 bun.lockb
+# Music download tracks (audio files only)
+apps/server/music/tracks/*.opus
+apps/server/music/tracks/*.mp3
+apps/server/music/tracks/*.m4a
+apps/server/music/tracks/*.webm

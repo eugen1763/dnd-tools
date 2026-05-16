@@ -1,58 +1,92 @@
-import { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder } from 'discord.js';
-import { DISCORD_TOKEN } from './env';
+import { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, GuildMember, VoiceChannel } from 'discord.js';
+import { DISCORD_TOKEN, MUSIC_CONTROL_BASE_URL } from './env';
+import { joinAndStartSession, leaveSession, getSession, PlayerState } from './music-player';
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildVoiceStates,
+  ],
+});
 
-const command = new SlashCommandBuilder()
-  .setName('game')
-  .setDescription('DnD game commands')
-  .setDMPermission(true)
-  .addSubcommand(sub => sub
-    .setName('create')
-    .setDescription('Create a new game')
-    .addStringOption(opt => opt
-      .setName('type')
-      .setDescription('Game type')
-      .setRequired(true)
-      .addChoices({ name: 'wordle', value: 'wordle' })
+async function setupCommands() {
+  // Game command
+  const gameCommand = new SlashCommandBuilder()
+    .setName('game')
+    .setDescription('DnD game commands')
+    .setDMPermission(true)
+    .addSubcommand(sub => sub
+      .setName('create')
+      .setDescription('Create a new game')
+      .addStringOption(opt => opt
+        .setName('type')
+        .setDescription('Game type')
+        .setRequired(true)
+        .addChoices({ name: 'wordle', value: 'wordle' })
+      )
+      .addStringOption(opt => opt
+        .setName('secret')
+        .setDescription('The word/number to guess')
+        .setRequired(true)
+      )
+      .addIntegerOption(opt => opt
+        .setName('tries')
+        .setDescription('Number of allowed guesses')
+        .setRequired(false)
+        .setMinValue(1)
+        .setMaxValue(20)
+      )
+    );
+
+  // Music command
+  const musicCommand = new SlashCommandBuilder()
+    .setName('music')
+    .setDescription('DnD session music controls')
+    .setDMPermission(false)
+    .addSubcommand(sub => sub
+      .setName('start')
+      .setDescription('Start music in your current voice channel')
     )
-    .addStringOption(opt => opt
-      .setName('secret')
-      .setDescription('The word/number to guess')
-      .setRequired(true)
-    )
-    .addIntegerOption(opt => opt
-      .setName('tries')
-      .setDescription('Number of allowed guesses')
-      .setRequired(false)
-      .setMinValue(1)
-      .setMaxValue(20)
-    )
-  );
+    .addSubcommand(sub => sub
+      .setName('stop')
+      .setDescription('Stop music and leave voice channel')
+    );
 
-client.once('ready', async () => {
-  console.log(`Logged in as ${client.user?.tag}`);
-
-  // Register globally for future guilds (takes up to 1h)
-  await client.application?.commands.create(command);
+  // Register globally for future guilds
+  await client.application?.commands.create(gameCommand);
+  await client.application?.commands.create(musicCommand);
 
   // Also register in every guild the bot is in (instant)
   for (const guild of client.guilds.cache.values()) {
     try {
-      await guild.commands.create(command);
-      console.log(`Registered in guild: ${guild.name}`);
+      const existing = await guild.commands.fetch();
+      if (!existing.find(c => c.name === 'game')) await guild.commands.create(gameCommand);
+      if (!existing.find(c => c.name === 'music')) await guild.commands.create(musicCommand);
+      console.log(`Registered commands in guild: ${guild.name}`);
     } catch (err) {
       console.error(`Failed to register in guild ${guild.name}:`, err);
     }
   }
 
   console.log('Slash commands registered');
+}
+
+client.once('ready', async () => {
+  console.log(`Logged in as ${client.user?.tag}`);
+  await setupCommands();
 });
 
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== 'game') return;
 
+  if (interaction.commandName === 'game') {
+    await handleGameCommand(interaction);
+  } else if (interaction.commandName === 'music') {
+    await handleMusicCommand(interaction);
+  }
+});
+
+async function handleGameCommand(interaction: any) {
   const subcommand = interaction.options.getSubcommand();
   if (subcommand !== 'create') return;
 
@@ -94,7 +128,116 @@ client.on('interactionCreate', async (interaction) => {
   } catch (err) {
     await interaction.editReply({ content: 'Failed to create game. Is the server running?' });
   }
-});
+}
+
+async function handleMusicCommand(interaction: any) {
+  const subcommand = interaction.options.getSubcommand();
+  const member = interaction.member as GuildMember;
+
+  if (subcommand === 'start') {
+    await handleMusicStart(interaction, member);
+  } else if (subcommand === 'stop') {
+    await handleMusicStop(interaction, member);
+  }
+}
+
+async function handleMusicStart(interaction: any, member: GuildMember) {
+  await interaction.deferReply({ ephemeral: true });
+
+  // Check if user is in a voice channel
+  if (!member.voice.channel) {
+    await interaction.editReply({
+      content: '❌ You must be in a voice channel to start music!',
+    });
+    return;
+  }
+
+  const channel = member.voice.channel as VoiceChannel;
+
+  // Check if there's already a session in this guild
+  const existing = getSession(channel.guild.id);
+  if (existing && existing.adminUserId !== member.id) {
+    // If the current admin is still in voice, deny, otherwise auto-replace
+    const adminMember = await channel.guild.members.fetch(existing.adminUserId).catch(() => null);
+    if (adminMember && adminMember.voice.channelId === existing.voiceChannelId) {
+      await interaction.editReply({
+        content: '❌ Another admin is already controlling music. They must use `/music stop` first.',
+      });
+      return;
+    }
+  }
+
+  try {
+    const { token, state } = await joinAndStartSession(member, channel);
+
+    const controlUrl = `${MUSIC_CONTROL_BASE_URL}/music?token=${token}`;
+
+    const embed = new EmbedBuilder()
+      .setTitle('🎵 Music Session Started')
+      .setColor(0x57F287)
+      .setDescription(`Joined **${channel.name}**`)
+      .addFields(
+        { name: 'Control Panel', value: controlUrl },
+        { name: 'Controls', value: 'Use the link above to manage the queue, add tracks, and control playback.' }
+      )
+      .setFooter({ text: 'Use /music stop to end the session' });
+
+    // Send ephemeral reply with the link
+    await interaction.editReply({ embeds: [embed] });
+
+    // Also send a public message that music has started
+    await interaction.followUp({
+      content: `🎵 Music session started by <@${member.id}> in **${channel.name}**!`,
+    });
+  } catch (err) {
+    console.error('Failed to start music session:', err);
+    await interaction.editReply({
+      content: `❌ Failed to start music session: ${err instanceof Error ? err.message : 'Unknown error'}`,
+    });
+  }
+}
+
+async function handleMusicStop(interaction: any, member: GuildMember) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const guildId = interaction.guildId as string;
+  const session = getSession(guildId);
+
+  if (!session) {
+    await interaction.editReply({
+      content: '❌ No active music session in this server.',
+    });
+    return;
+  }
+
+  // Only the admin who started the session can stop it, or server admins
+  const isAdmin = session.adminUserId === member.id;
+  const isMod = member.permissions?.has('Administrator') || member.permissions?.has('ManageGuild');
+
+  if (!isAdmin && !isMod) {
+    await interaction.editReply({
+      content: '❌ Only the session admin or server moderators can stop the music.',
+    });
+    return;
+  }
+
+  try {
+    await leaveSession(guildId);
+    await interaction.editReply({
+      content: '🛑 Music session ended. Left the voice channel.',
+    });
+
+    // Public notification
+    await interaction.followUp({
+      content: `🛑 Music session ended by <@${member.id}>.`,
+    });
+  } catch (err) {
+    console.error('Failed to stop music session:', err);
+    await interaction.editReply({
+      content: '❌ Failed to stop music session.',
+    });
+  }
+}
 
 export function startBot() {
   if (!DISCORD_TOKEN) {
