@@ -1,6 +1,6 @@
 import { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, GuildMember, VoiceChannel, MessageFlags } from 'discord.js';
-import { DISCORD_TOKEN, MUSIC_CONTROL_BASE_URL } from './env';
-import { joinAndStartSession, leaveSession, getSession, PlayerState } from './music-player';
+import { DISCORD_TOKEN, MUSIC_CONTROL_BASE_URL, GAME_BASE_URL } from './env';
+import { joinAndStartSession, leaveSession, getSession } from './music-player';
 
 const client = new Client({
   intents: [
@@ -9,9 +9,8 @@ const client = new Client({
   ],
 });
 
-async function setupCommands() {
-  // Game command
-  const gameCommand = new SlashCommandBuilder()
+function buildGameCommand() {
+  return new SlashCommandBuilder()
     .setName('game')
     .setDescription('DnD game commands')
     .setDMPermission(true)
@@ -37,9 +36,10 @@ async function setupCommands() {
         .setMaxValue(20)
       )
     );
+}
 
-  // Music command
-  const musicCommand = new SlashCommandBuilder()
+function buildMusicCommand() {
+  return new SlashCommandBuilder()
     .setName('music')
     .setDescription('DnD session music controls')
     .setDMPermission(false)
@@ -51,17 +51,25 @@ async function setupCommands() {
       .setName('stop')
       .setDescription('Stop music and leave voice channel')
     );
+}
 
+async function registerCommandsInGuild(guild: any) {
+  const gameCommand = buildGameCommand();
+  const musicCommand = buildMusicCommand();
+  try {
+    const existing = await guild.commands.fetch();
+    if (!existing.find(c => c.name === 'game')) await guild.commands.create(gameCommand);
+    if (!existing.find(c => c.name === 'music')) await guild.commands.create(musicCommand);
+    console.log(`Registered commands in guild: ${guild.name} (${guild.id})`);
+  } catch (err) {
+    console.error(`Failed to register in guild ${guild.name}:`, err);
+  }
+}
+
+async function setupCommands() {
   // Register in every guild the bot is in (instant, no duplicate)
   for (const guild of client.guilds.cache.values()) {
-    try {
-      const existing = await guild.commands.fetch();
-      if (!existing.find(c => c.name === 'game')) await guild.commands.create(gameCommand);
-      if (!existing.find(c => c.name === 'music')) await guild.commands.create(musicCommand);
-      console.log(`Registered commands in guild: ${guild.name}`);
-    } catch (err) {
-      console.error(`Failed to register in guild ${guild.name}:`, err);
-    }
+    await registerCommandsInGuild(guild);
   }
 
   console.log('Slash commands registered');
@@ -74,54 +82,7 @@ client.once('ready', async () => {
 
 // Register commands when joining a new guild
 client.on('guildCreate', async (guild) => {
-  try {
-    const gameCommand = new SlashCommandBuilder()
-      .setName('game')
-      .setDescription('DnD game commands')
-      .setDMPermission(true)
-      .addSubcommand(sub => sub
-        .setName('create')
-        .setDescription('Create a new game')
-        .addStringOption(opt => opt
-          .setName('type')
-          .setDescription('Game type')
-          .setRequired(true)
-          .addChoices({ name: 'wordle', value: 'wordle' })
-        )
-        .addStringOption(opt => opt
-          .setName('secret')
-          .setDescription('The word/number to guess')
-          .setRequired(true)
-        )
-        .addIntegerOption(opt => opt
-          .setName('tries')
-          .setDescription('Number of allowed guesses')
-          .setRequired(false)
-          .setMinValue(1)
-          .setMaxValue(20)
-        )
-      );
-
-    const musicCommand = new SlashCommandBuilder()
-      .setName('music')
-      .setDescription('DnD session music controls')
-      .setDMPermission(false)
-      .addSubcommand(sub => sub
-        .setName('start')
-        .setDescription('Start music in your current voice channel')
-      )
-      .addSubcommand(sub => sub
-        .setName('stop')
-        .setDescription('Stop music and leave voice channel')
-      );
-
-    const existing = await guild.commands.fetch();
-    if (!existing.find(c => c.name === 'game')) await guild.commands.create(gameCommand);
-    if (!existing.find(c => c.name === 'music')) await guild.commands.create(musicCommand);
-    console.log(`Registered commands in new guild: ${guild.name} (${guild.id})`);
-  } catch (err) {
-    console.error(`Failed to register commands in new guild ${guild.id}:`, err);
-  }
+  await registerCommandsInGuild(guild);
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -172,13 +133,14 @@ async function handleGameCommand(interaction: any) {
       .addFields(
         { name: 'Mode', value: mode, inline: true },
         { name: 'Tries', value: String(tries ?? 6), inline: true },
-        { name: 'Link', value: `https://0x1763.dev${game.url}` }
+        { name: 'Link', value: `${GAME_BASE_URL}${game.url}` }
       )
       .setFooter({ text: 'Share this link with your players!' });
 
     await interaction.editReply({ embeds: [embed] });
   } catch (err) {
-    await interaction.editReply({ content: 'Failed to create game. Is the server running?' });
+    console.error('Failed to create game:', err);
+    await interaction.editReply({ content: 'Failed to create game. Is the server running?' }).catch(e => console.error('editReply failed after game error:', e));
   }
 }
 

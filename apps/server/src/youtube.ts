@@ -19,11 +19,6 @@ export interface DownloadResult {
   playlistTitle?: string;
 }
 
-export interface PlaylistResult {
-  title: string;
-  tracks: { id: string; title: string; url: string; duration: number }[];
-}
-
 /** Extract video/playlist IDs from various YouTube URL formats */
 export function parseYouTubeUrl(url: string): { type: 'video' | 'playlist'; videoId?: string; playlistId?: string } {
   // Handle youtu.be short URLs

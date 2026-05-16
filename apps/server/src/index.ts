@@ -130,9 +130,13 @@ const app = new Elysia()
   .post('/api/games', ({ body }) => {
     const { secret, tries } = body as { secret: string; tries?: number };
     if (!secret || secret.length < 1) {
-      return new Response('Missing secret', { status: 400 });
+      return new Response(JSON.stringify({ error: 'Missing secret' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
-    const game = createGame(secret, tries);
+    const safeTries = tries !== undefined ? Math.max(1, tries) : undefined;
+    const game = createGame(secret, safeTries);
     return { id: game.id, url: game.url };
   })
   .get('/api/games/:id', ({ params: { id } }) => {
