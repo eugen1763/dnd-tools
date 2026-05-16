@@ -510,7 +510,7 @@ function api(path, opts = {}) {
   if (opts.body && !(opts.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json';
   }
-  // Default to POST when sending a body, unless method explicitly set
+  // Default to POST for action endpoints, GET for reads
   const method = opts.method || (opts.body ? 'POST' : 'GET');
   return fetch(`${API_BASE}${path}`, {
     ...opts,
@@ -817,7 +817,7 @@ async function playTrack(trackId) {
 }
 
 async function togglePlay() {
-  const res = await api('/pause');
+  const res = await api('/pause', { method: 'POST' });
   if (res.ok) {
     state = res.state;
     updateUI();
@@ -825,7 +825,7 @@ async function togglePlay() {
 }
 
 async function nextTrack() {
-  const res = await api('/next');
+  const res = await api('/next', { method: 'POST' });
   if (res.ok) {
     state = res.state;
     updateUI();
@@ -834,7 +834,7 @@ async function nextTrack() {
 }
 
 async function prevTrack() {
-  const res = await api('/previous');
+  const res = await api('/previous', { method: 'POST' });
   if (res.ok) {
     state = res.state;
     updateUI();
