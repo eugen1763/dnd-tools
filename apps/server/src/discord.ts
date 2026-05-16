@@ -134,14 +134,7 @@ client.on('interactionCreate', async (interaction) => {
       await handleMusicCommand(interaction);
     }
   } catch (err) {
-    console.error('Error handling interaction:', err);
-    try {
-      if (interaction.deferred || interaction.replied) {
-        await interaction.editReply({ content: 'Error processing command.' });
-      } else {
-        await interaction.reply({ content: 'Error processing command.', flags: 64 });
-      }
-    } catch {}
+    console.error('Error handling interaction:', err instanceof Error ? err.message : err);
   }
 });
 
@@ -201,13 +194,13 @@ async function handleMusicCommand(interaction: any) {
 }
 
 async function handleMusicStart(interaction: any, member: GuildMember) {
-  await interaction.deferReply({ flags: 64 }); // Ephemeral
+  await interaction.deferReply({ flags: 64 }).catch(() => {});
 
   // Check if user is in a voice channel
   if (!member.voice.channel) {
     await interaction.editReply({
       content: '❌ You must be in a voice channel to start music!',
-    });
+    }).catch(() => {});
     return;
   }
 
@@ -221,7 +214,7 @@ async function handleMusicStart(interaction: any, member: GuildMember) {
     if (adminMember && adminMember.voice.channelId === existing.voiceChannelId) {
       await interaction.editReply({
         content: '❌ Another admin is already controlling music. They must use `/music stop` first.',
-      });
+      }).catch(() => {});
       return;
     }
   }
@@ -242,22 +235,22 @@ async function handleMusicStart(interaction: any, member: GuildMember) {
       .setFooter({ text: 'Use /music stop to end the session' });
 
     // Send ephemeral reply with the link
-    await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [embed] }).catch(() => {});
 
     // Also send a public message that music has started
     await interaction.followUp({
       content: `🎵 Music session started by <@${member.id}> in **${channel.name}**!`,
-    });
+    }).catch(() => {});
   } catch (err) {
     console.error('Failed to start music session:', err);
     await interaction.editReply({
       content: `❌ Failed to start music session: ${err instanceof Error ? err.message : 'Unknown error'}`,
-    });
+    }).catch(() => {});
   }
 }
 
 async function handleMusicStop(interaction: any, member: GuildMember) {
-  await interaction.deferReply({ flags: 64 }); // Ephemeral
+  await interaction.deferReply({ flags: 64 }).catch(() => {});
 
   const guildId = interaction.guildId as string;
   const session = getSession(guildId);
@@ -265,7 +258,7 @@ async function handleMusicStop(interaction: any, member: GuildMember) {
   if (!session) {
     await interaction.editReply({
       content: '❌ No active music session in this server.',
-    });
+    }).catch(() => {});
     return;
   }
 
@@ -276,7 +269,7 @@ async function handleMusicStop(interaction: any, member: GuildMember) {
   if (!isAdmin && !isMod) {
     await interaction.editReply({
       content: '❌ Only the session admin or server moderators can stop the music.',
-    });
+    }).catch(() => {});
     return;
   }
 
@@ -284,17 +277,17 @@ async function handleMusicStop(interaction: any, member: GuildMember) {
     await leaveSession(guildId);
     await interaction.editReply({
       content: '🛑 Music session ended. Left the voice channel.',
-    });
+    }).catch(() => {});
 
     // Public notification
     await interaction.followUp({
       content: `🛑 Music session ended by <@${member.id}>.`,
-    });
+    }).catch(() => {});
   } catch (err) {
     console.error('Failed to stop music session:', err);
     await interaction.editReply({
       content: '❌ Failed to stop music session.',
-    });
+    }).catch(() => {});
   }
 }
 
