@@ -339,40 +339,45 @@ function playTrackInSession(guildId: string, item: QueueItem): boolean {
   if (!track) return false;
 
   const filePath = join(MUSIC_DIR, track.filename);
-  if (!existsSync(filePath)) return false;
+  if (!existsSync(filePath)) {
+    console.error(`Track file not found: ${filePath}`);
+    return false;
+  }
 
   try {
-    // Use ffmpeg to decode opus and pipe to Discord
-    // Apply volume scaling via ffmpeg
-    const volumeArg = session.volume !== 1
-      ? `volume=${session.volume * 2}` // ffmpeg volume filter: 1.0 = original
-      : null;
-
-    const ffmpegArgs = ['-i', filePath];
-    if (volumeArg) {
-      ffmpegArgs.push('-af', volumeArg);
-    }
-    ffmpegArgs.push(
-      '-f', 'opus',           // output opus format
-      '-ar', '48000',         // sample rate for Discord
+    // Use ffmpeg to decode any audio to raw PCM for Discord
+    const ffmpegArgs = [
+      '-i', filePath,
+      '-f', 's16le',          // raw PCM signed 16-bit little-endian
+      '-ar', '48000',         // Discord's sample rate
       '-ac', '2',             // stereo
+      '-loglevel', 'error',
       'pipe:1',
-    );
+    ];
 
     const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     const resource = createAudioResource(ffmpeg.stdout, {
-      inputType: StreamType.Opus,
-      inlineVolume: false, // We handle volume via ffmpeg
+      inputType: StreamType.Raw,
+      inlineVolume: true,
     });
+
+    resource.volume?.setVolume(session.volume);
 
     player.play(resource);
     session.isPlaying = true;
 
-    // Handle ffmpeg errors
     ffmpeg.on('error', (err) => {
       console.error('FFmpeg error:', err);
-      playNext(guildId);
+    });
+
+    ffmpeg.stderr.on('data', (chunk: Buffer) => {
+      const msg = chunk.toString().trim();
+      if (msg) console.error('FFmpeg:', msg);
+    });
+
+    ffmpeg.on('close', (code) => {
+      if (code !== 0) console.error(`FFmpeg exited with code ${code}`);
     });
 
     return true;
