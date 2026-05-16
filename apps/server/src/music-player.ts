@@ -85,6 +85,14 @@ export async function joinAndStartSession(
     adapterCreator: channel.guild.voiceAdapterCreator,
   });
 
+  // Wait for the connection to be ready (up to 15s)
+  try {
+    await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+  } catch {
+    connection.destroy();
+    throw new Error('Failed to join voice channel. Make sure the bot has Connect permission and the channel is accessible.');
+  }
+
   const player = createAudioPlayer({
     behaviors: {
       noSubscriber: NoSubscriberBehavior.Play,
