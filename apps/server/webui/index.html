@@ -144,27 +144,27 @@ input{font:inherit;color:inherit}
 }
 .track-item{
   display:grid;
-  grid-template-columns:32px 1fr 100px 60px;
+  grid-template-columns:32px 1fr 100px 40px;
   gap:12px;
   padding:8px 12px;
   border-radius:var(--radius);
   cursor:pointer;
   transition:background .15s;
   align-items:center;
+  position:relative;
 }
 .track-item:hover{background:var(--bg-hover)}
 .track-item.playing{background:var(--accent-dim)}
-.track-item .num{text-align:center;font-size:13px;color:var(--text-tertiary)}
+.track-item .num{text-align:center;font-size:13px;color:var(--text-tertiary);grid-column:1}
+.track-item .play-icon-btn{display:none;grid-column:1;justify-self:center;color:var(--accent)}
+.track-item:hover .num{display:none}
+.track-item:hover .play-icon-btn{display:flex}
 
 .track-info{display:flex;flex-direction:column;min-width:0}
 .track-info .title{font-size:14px;font-weight:500;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .track-info .meta{font-size:12px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 .track-duration{font-size:13px;color:var(--text-secondary);text-align:right}
-.track-actions{display:flex;align-items:center;justify-content:center;gap:4px;opacity:0;transition:opacity .15s}
-.track-item:hover .track-actions{opacity:1}
-.track-item:hover .num{display:none}
-.track-item:hover .num ~ .track-actions{display:flex}
 
 /* Player bar */
 .player-bar{
@@ -225,11 +225,6 @@ input{font:inherit;color:inherit}
 .player-extras button{color:var(--text-tertiary);transition:all .15s}
 .player-extras button:hover{color:var(--text-primary)}
 .player-extras button.active{color:var(--accent)}
-.volume-wrap{display:flex;align-items:center;gap:4px}
-.volume-slider{width:80px;height:4px;border-radius:2px;background:var(--bg-active);cursor:pointer;position:relative;appearance:none}
-.volume-slider::-webkit-slider-thumb{appearance:none;width:12px;height:12px;border-radius:50%;background:var(--text-primary);cursor:pointer}
-.volume-slider::-webkit-slider-runnable-track{height:4px;border-radius:2px}
-.volume-slider:hover::-webkit-slider-thumb{background:var(--accent)}
 
 /* Modal */
 .modal-overlay{
@@ -402,9 +397,6 @@ input{font:inherit;color:inherit}
 
     <div class="player-controls">
       <div class="player-buttons">
-        <button id="shuffleBtn" class="btn-icon" title="Shuffle" style="width:30px;height:30px">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
-        </button>
         <button id="prevBtn" class="btn-icon" title="Previous" style="width:30px;height:30px">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
         </button>
@@ -413,9 +405,6 @@ input{font:inherit;color:inherit}
         </button>
         <button id="nextBtn" class="btn-icon" title="Next" style="width:30px;height:30px">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
-        </button>
-        <button id="loopBtn" class="btn-icon" title="Loop" style="width:30px;height:30px">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
         </button>
       </div>
       <div class="player-progress">
@@ -430,12 +419,12 @@ input{font:inherit;color:inherit}
     </div>
 
     <div class="player-extras">
-      <div class="volume-wrap">
-        <button class="btn-icon" id="muteBtn" title="Mute" style="width:30px;height:30px">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-        </button>
-        <input type="range" class="volume-slider" id="volumeSlider" min="0" max="1" step="0.01" value="0.5">
-      </div>
+      <button class="btn-icon" id="loopBtn" title="Loop" style="width:30px;height:30px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+      </button>
+      <button class="btn-icon" id="shuffleBtn" title="Shuffle" style="width:30px;height:30px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
+      </button>
     </div>
   </footer>
 </div>
@@ -507,8 +496,6 @@ const prevBtn = $('#prevBtn');
 const nextBtn = $('#nextBtn');
 const shuffleBtn = $('#shuffleBtn');
 const loopBtn = $('#loopBtn');
-const muteBtn = $('#muteBtn');
-const volumeSlider = $('#volumeSlider');
 const progressBar = $('#progressBar');
 const progressFill = $('#progressFill');
 const currentTime = $('#currentTime');
@@ -656,11 +643,9 @@ function renderLibrary() {
     html += `
       <div class="track-item${isPlaying ? ' playing' : ''}" data-track-id="${t.id}" data-index="${i}">
         <span class="num">${i + 1}</span>
-        <div class="track-actions">
-          <button class="btn-icon play-track-btn" title="Play" style="width:28px;height:28px;color:var(--accent)" data-track-id="${t.id}">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-          </button>
-        </div>
+        <button class="btn-icon play-icon-btn" title="Play" data-track-id="${t.id}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
         <div class="track-info">
           <div class="title">${escapeHtml(t.title)}</div>
           <div class="meta">${escapeHtml(t.category || 'uncategorized')}</div>
@@ -677,7 +662,7 @@ function renderLibrary() {
   viewContent.innerHTML = html;
 
   // Bind events
-  viewContent.querySelectorAll('.play-track-btn').forEach(btn => {
+  viewContent.querySelectorAll('.play-icon-btn').forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); playTrack(btn.dataset.trackId); };
   });
   viewContent.querySelectorAll('.add-queue-btn').forEach(btn => {
@@ -707,6 +692,9 @@ function renderQueueView() {
     html += `
       <div class="track-item${isCurrent ? ' playing' : ''}" data-queue-index="${i}">
         <span class="num">${i + 1}</span>
+        <button class="btn-icon play-icon-btn" title="Play" data-queue-track="${q.trackId}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
         <div class="track-info">
           <div class="title">${escapeHtml(q.title)}${isCurrent ? ' <span style="color:var(--accent);font-size:11px">NOW</span>' : ''}</div>
           <div class="meta">${isCurrent ? 'Currently playing' : ''}</div>
@@ -724,6 +712,9 @@ function renderQueueView() {
 
   viewContent.querySelectorAll('.remove-queue-btn').forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); removeFromQueue(parseInt(btn.dataset.queueIndex)); };
+  });
+  viewContent.querySelectorAll('.play-icon-btn').forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); playTrack(btn.dataset.queueTrack); };
   });
 }
 
@@ -801,9 +792,6 @@ function updateUI() {
 
   // Loop
   loopBtn.classList.toggle('active', state.loop);
-
-  // Volume
-  volumeSlider.value = state.volume;
 
   // Progress - approximate since we don't have real-time position
   // We'll just set to 0 and let the track start
@@ -895,13 +883,6 @@ async function toggleLoop() {
     state = res.state;
     updateUI();
     showToast(state.loop ? 'Loop on' : 'Loop off');
-  }
-}
-
-async function setVolume(vol) {
-  const res = await api('/volume', { body: { volume: vol } });
-  if (res.ok) {
-    state = res.state;
   }
 }
 
@@ -1044,10 +1025,6 @@ prevBtn.onclick = prevTrack;
 shuffleBtn.onclick = toggleShuffle;
 loopBtn.onclick = toggleLoop;
 clearQueueBtn.onclick = clearQueue;
-
-volumeSlider.oninput = () => {
-  setVolume(parseFloat(volumeSlider.value));
-};
 
 // Progress bar click to seek (approximate)
 progressBar.onclick = (e) => {

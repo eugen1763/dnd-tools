@@ -34,7 +34,7 @@ export interface PlayerState {
   queue: QueueItem[];
   currentIndex: number;
   isPlaying: boolean;
-  volume: number; // 0.0 - 1.0
+  volume: number; // always 1.0
   loop: boolean;
   shuffle: boolean;
 }
@@ -102,7 +102,7 @@ export async function joinAndStartSession(
     queue: [],
     currentIndex: -1,
     isPlaying: false,
-    volume: 0.5,
+    volume: 1.0,
     loop: false,
     shuffle: false,
   };
