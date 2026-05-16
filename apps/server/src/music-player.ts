@@ -43,6 +43,7 @@ export interface PlayerState {
 const sessions = new Map<string, PlayerState>();
 const connections = new Map<string, VoiceConnection>();
 const players = new Map<string, AudioPlayer>();
+const ffmpegProcesses = new Map<string, any>(); // guildId -> ChildProcess
 const controlTokens = new Map<string, string>(); // token -> guildId
 
 export function generateControlToken(guildId: string): string {
@@ -136,6 +137,7 @@ export async function joinAndStartSession(
 
   // Handle player state changes
   player.on(AudioPlayerStatus.Idle, () => {
+    ffmpegProcesses.delete(guildId);
     if (state.loop && state.currentIndex >= 0 && state.currentIndex < state.queue.length) {
       // Re-play the current track
       playTrackInSession(guildId, state.queue[state.currentIndex]);
@@ -160,6 +162,12 @@ export async function leaveSession(guildId: string): Promise<void> {
   if (player) {
     player.stop();
     players.delete(guildId);
+  }
+
+  const ffmpeg = ffmpegProcesses.get(guildId);
+  if (ffmpeg) {
+    ffmpeg.kill();
+    ffmpegProcesses.delete(guildId);
   }
 
   const connection = connections.get(guildId);
@@ -329,7 +337,22 @@ export function setShuffle(guildId: string, shuffle: boolean): void {
   session.shuffle = shuffle;
 }
 
-function playTrackInSession(guildId: string, item: QueueItem): boolean {
+export function seek(guildId: string, position: number): boolean {
+  const session = sessions.get(guildId);
+  const player = players.get(guildId);
+  if (!session || !player || session.queue.length === 0 || session.currentIndex < 0) return false;
+
+  const ffmpeg = ffmpegProcesses.get(guildId);
+  if (ffmpeg) {
+    ffmpeg.kill();
+    ffmpegProcesses.delete(guildId);
+  }
+
+  player.stop();
+  return playTrackInSession(guildId, session.queue[session.currentIndex], position);
+}
+
+function playTrackInSession(guildId: string, item: QueueItem, seekPosition?: number): boolean {
   const connection = connections.get(guildId);
   const player = players.get(guildId);
   const session = sessions.get(guildId);
@@ -347,7 +370,9 @@ function playTrackInSession(guildId: string, item: QueueItem): boolean {
   try {
     // Use ffmpeg to decode any audio to raw PCM for Discord
     const ffmpegArgs = [
+      ...(seekPosition ? ['-ss', String(seekPosition)] : []),
       '-i', filePath,
+      ...(seekPosition ? ['-noaccurate_seek'] : []),
       '-f', 's16le',          // raw PCM signed 16-bit little-endian
       '-ar', '48000',         // Discord's sample rate
       '-ac', '2',             // stereo
@@ -356,6 +381,7 @@ function playTrackInSession(guildId: string, item: QueueItem): boolean {
     ];
 
     const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    ffmpegProcesses.set(guildId, ffmpeg);
 
     const resource = createAudioResource(ffmpeg.stdout, {
       inputType: StreamType.Raw,

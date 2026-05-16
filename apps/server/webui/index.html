@@ -1026,14 +1026,18 @@ shuffleBtn.onclick = toggleShuffle;
 loopBtn.onclick = toggleLoop;
 clearQueueBtn.onclick = clearQueue;
 
-// Progress bar click to seek (approximate)
-progressBar.onclick = (e) => {
+// Progress bar click to seek
+progressBar.onclick = async (e) => {
   if (!state || !state.queue[state.currentIndex]) return;
   const rect = progressBar.getBoundingClientRect();
   const pct = (e.clientX - rect.left) / rect.width;
   const duration = state.queue[state.currentIndex].duration || 0;
-  progressFill.style.width = `${pct * 100}%`;
-  currentTime.textContent = formatTime(duration * pct);
+  const position = Math.floor(duration * pct);
+  const res = await api('/seek', { body: { position } });
+  if (res.ok) {
+    state = res.state;
+    progressStart = Date.now() - (position * 1000);
+  }
 };
 
 // === Init ===

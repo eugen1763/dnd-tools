@@ -23,6 +23,7 @@ import {
   setVolume,
   setLoop,
   setShuffle,
+  seek,
   setQueue,
   addToQueue,
   clearQueue,
@@ -341,6 +342,21 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
     if (!session) return { error: 'No active session' };
 
     setShuffle(session.guildId, !session.shuffle);
+    return { ok: true, state: sessionToResponse(session) };
+  })
+
+  // Seek to position in current track
+  .post('/seek', ({ body, headers }) => {
+    const token = headers['x-control-token'];
+    if (!token) return { error: 'Missing x-control-token header' };
+    const session = getSessionByToken(token);
+    if (!session) return { error: 'No active session' };
+
+    const { position } = body as { position: number };
+    if (typeof position !== 'number' || position < 0) return { error: 'Invalid position' };
+
+    const ok = seek(session.guildId, position);
+    if (!ok) return { error: 'Failed to seek' };
     return { ok: true, state: sessionToResponse(session) };
   })
 
