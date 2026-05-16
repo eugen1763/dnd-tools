@@ -52,11 +52,7 @@ async function setupCommands() {
       .setDescription('Stop music and leave voice channel')
     );
 
-  // Register globally for future guilds
-  await client.application?.commands.create(gameCommand);
-  await client.application?.commands.create(musicCommand);
-
-  // Also register in every guild the bot is in (instant)
+  // Register in every guild the bot is in (instant, no duplicate)
   for (const guild of client.guilds.cache.values()) {
     try {
       const existing = await guild.commands.fetch();
@@ -119,8 +115,9 @@ client.on('guildCreate', async (guild) => {
         .setDescription('Stop music and leave voice channel')
       );
 
-    await guild.commands.create(gameCommand);
-    await guild.commands.create(musicCommand);
+    const existing = await guild.commands.fetch();
+    if (!existing.find(c => c.name === 'game')) await guild.commands.create(gameCommand);
+    if (!existing.find(c => c.name === 'music')) await guild.commands.create(musicCommand);
     console.log(`Registered commands in new guild: ${guild.name} (${guild.id})`);
   } catch (err) {
     console.error(`Failed to register commands in new guild ${guild.id}:`, err);
@@ -130,10 +127,21 @@ client.on('guildCreate', async (guild) => {
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  if (interaction.commandName === 'game') {
-    await handleGameCommand(interaction);
-  } else if (interaction.commandName === 'music') {
-    await handleMusicCommand(interaction);
+  try {
+    if (interaction.commandName === 'game') {
+      await handleGameCommand(interaction);
+    } else if (interaction.commandName === 'music') {
+      await handleMusicCommand(interaction);
+    }
+  } catch (err) {
+    console.error('Error handling interaction:', err);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content: 'Error processing command.' });
+      } else {
+        await interaction.reply({ content: 'Error processing command.', flags: 64 });
+      }
+    } catch {}
   }
 });
 
@@ -193,7 +201,7 @@ async function handleMusicCommand(interaction: any) {
 }
 
 async function handleMusicStart(interaction: any, member: GuildMember) {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: 64 }); // Ephemeral
 
   // Check if user is in a voice channel
   if (!member.voice.channel) {
@@ -249,7 +257,7 @@ async function handleMusicStart(interaction: any, member: GuildMember) {
 }
 
 async function handleMusicStop(interaction: any, member: GuildMember) {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: 64 }); // Ephemeral
 
   const guildId = interaction.guildId as string;
   const session = getSession(guildId);
