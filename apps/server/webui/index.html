@@ -888,19 +888,24 @@ function playNextInQueue(trackId) {
   showToast('Playing next');
 }
 
-async function setVolume(v, optimistic = true) {
+// Visual + optimistic only (no network) — used during a drag for smoothness.
+function applyVolumeUI(v) {
   v = clamp(v, 0, 1);
   if (App.player) App.player.volume = v;
   els.volumeSlider.value = Math.round(v * 100);
   els.volumeSlider.style.setProperty('--val', Math.round(v * 100) + '%');
   updateVolIcon(v);
   if (v > 0) App.lastVolume = v;
-  pushVolume(v);
+  return v;
 }
-const pushVolume = debounce((v) => { api('/volume', { body: { volume: v } }).catch(() => {}); }, 120);
+// Commit to the server. Debounced because each change reloads the audio stream
+// server-side (the Opus pipeline has no live volume), so we only send the final
+// value of a drag / key-repeat.
+const pushVolume = debounce((v) => { api('/volume', { body: { volume: v } }).catch(() => {}); }, 200);
+function commitVolume(v) { pushVolume(applyVolumeUI(v)); }
 function toggleMute() {
   const cur = App.player ? App.player.volume : 1;
-  setVolume(cur > 0 ? 0 : (App.lastVolume || 1));
+  commitVolume(cur > 0 ? 0 : (App.lastVolume || 1));
 }
 
 async function toggleFav(trackId) {
@@ -1109,7 +1114,8 @@ els.repeatBtn.addEventListener('click', cycleRepeat);
 els.clearQueueBtn.addEventListener('click', () => { if (App.player?.queue.length) clearQueue(); });
 $('#newCategoryBtn').addEventListener('click', createNewCategory);
 els.muteBtn.addEventListener('click', toggleMute);
-els.volumeSlider.addEventListener('input', () => setVolume(els.volumeSlider.value / 100));
+els.volumeSlider.addEventListener('input', () => applyVolumeUI(els.volumeSlider.value / 100)); // smooth drag, no POST
+els.volumeSlider.addEventListener('change', () => commitVolume(els.volumeSlider.value / 100));  // POST on release
 
 // Seek
 els.progressBar.addEventListener('click', (e) => {
@@ -1157,8 +1163,8 @@ document.addEventListener('keydown', (e) => {
     case 'm': toggleMute(); break;
     case 'ArrowRight': { const t = currentTrack(); if (t) seekTo(clamp(Math.floor(App.pos.sec + (App.pos.playing ? (performance.now() - App.pos.at) / 1000 : 0)) + 5, 0, t.duration)); break; }
     case 'ArrowLeft': { const t = currentTrack(); if (t) seekTo(clamp(Math.floor(App.pos.sec + (App.pos.playing ? (performance.now() - App.pos.at) / 1000 : 0)) - 5, 0, t.duration)); break; }
-    case 'ArrowUp': e.preventDefault(); setVolume((App.player?.volume ?? 1) + 0.05); break;
-    case 'ArrowDown': e.preventDefault(); setVolume((App.player?.volume ?? 1) - 0.05); break;
+    case 'ArrowUp': e.preventDefault(); commitVolume((App.player?.volume ?? 1) + 0.05); break;
+    case 'ArrowDown': e.preventDefault(); commitVolume((App.player?.volume ?? 1) - 0.05); break;
   }
 });
 
