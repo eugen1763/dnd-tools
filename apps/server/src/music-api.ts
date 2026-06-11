@@ -24,9 +24,11 @@ import {
   playPrevious,
   togglePlayPause,
   setVolume,
-  setLoop,
+  setRepeatMode,
   setShuffle,
   seek,
+  getPositionSeconds,
+  RepeatMode,
   setQueue,
   addToQueue,
   clearQueue,
@@ -125,8 +127,9 @@ function sessionToResponse(s: PlayerState) {
     currentIndex: s.currentIndex,
     isPlaying: s.isPlaying,
     volume: s.volume,
-    loop: s.loop,
+    repeatMode: s.repeatMode,
     shuffle: s.shuffle,
+    position: getPositionSeconds(s),
   };
 }
 
@@ -327,14 +330,23 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
     return { ok: true, state: sessionToResponse(session) };
   })
 
-  // Toggle loop
-  .post('/loop', ({ headers }) => {
+  // Set repeat mode. Body may specify { mode: 'off'|'all'|'one' }; with no body
+  // it cycles off -> all -> one -> off.
+  .post('/loop', ({ body, headers }) => {
     const token = headers['x-control-token'];
     if (!token) return { error: 'Missing x-control-token header' };
     const session = getSessionByToken(token);
     if (!session) return { error: 'No active session' };
 
-    setLoop(session.guildId, !session.loop);
+    const modes: RepeatMode[] = ['off', 'all', 'one'];
+    const requested = (body as { mode?: string } | undefined)?.mode;
+    let next: RepeatMode;
+    if (requested && modes.includes(requested as RepeatMode)) {
+      next = requested as RepeatMode;
+    } else {
+      next = modes[(modes.indexOf(session.repeatMode) + 1) % modes.length];
+    }
+    setRepeatMode(session.guildId, next);
     return { ok: true, state: sessionToResponse(session) };
   })
 

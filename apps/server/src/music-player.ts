@@ -26,6 +26,8 @@ export interface QueueItem {
   requestedBy: string;
 }
 
+export type RepeatMode = 'off' | 'all' | 'one';
+
 export interface PlayerState {
   guildId: string;
   voiceChannelId: string;
@@ -35,14 +37,31 @@ export interface PlayerState {
   currentIndex: number;
   isPlaying: boolean;
   volume: number;
-  loop: boolean;
+  repeatMode: RepeatMode;
   shuffle: boolean;
+  // Playback position tracking so the web UI can render a self-correcting
+  // progress bar. `positionMs` is the offset at the last anchor; while playing,
+  // the live position is positionMs + (Date.now() - startedAtMs).
+  positionMs: number;
+  startedAtMs: number;
+}
+
+/** Current playback position of a session in seconds (0 if nothing playing). */
+export function getPositionSeconds(s: PlayerState): number {
+  // No valid current track -> no meaningful position.
+  if (s.currentIndex < 0 || s.currentIndex >= s.queue.length) return 0;
+  const base = s.isPlaying ? s.positionMs + (Date.now() - s.startedAtMs) : s.positionMs;
+  const secs = Math.max(0, base) / 1000;
+  // Clamp to the current track's duration so the bar never overshoots.
+  const dur = s.queue[s.currentIndex]?.duration ?? 0;
+  return dur > 0 ? Math.min(secs, dur) : secs;
 }
 
 const sessions = new Map<string, PlayerState>();
 const connections = new Map<string, VoiceConnection>();
 const players = new Map<string, AudioPlayer>();
 const ffmpegProcesses = new Map<string, any>();
+const resources = new Map<string, any>();
 const controlTokens = new Map<string, string>();
 
 // Playback resilience state (not part of the persisted/serialized session).
@@ -145,8 +164,10 @@ export async function joinAndStartSession(
     currentIndex: -1,
     isPlaying: false,
     volume: 1.0,
-    loop: false,
+    repeatMode: 'off',
     shuffle: false,
+    positionMs: 0,
+    startedAtMs: 0,
   };
 
   sessions.set(guildId, state);
@@ -198,7 +219,7 @@ export async function joinAndStartSession(
       clearFailures(guildId);
     }
 
-    if (state.loop && state.currentIndex >= 0 && state.currentIndex < state.queue.length) {
+    if (state.repeatMode === 'one' && state.currentIndex >= 0 && state.currentIndex < state.queue.length) {
       playTrackInSession(guildId, state.queue[state.currentIndex]);
     } else if (state.queue.length > 0) {
       playNext(guildId);
@@ -235,6 +256,7 @@ export async function leaveSession(guildId: string): Promise<void> {
   const session = sessions.get(guildId);
   if (session) { invalidateToken(session.controlToken); sessions.delete(guildId); }
 
+  resources.delete(guildId);
   playStartedAt.delete(guildId);
   failureState.delete(guildId);
 }
@@ -245,6 +267,7 @@ function cleanupSession(guildId: string): void {
   connections.delete(guildId);
   const session = sessions.get(guildId);
   if (session) { invalidateToken(session.controlToken); sessions.delete(guildId); }
+  resources.delete(guildId);
   playStartedAt.delete(guildId);
   failureState.delete(guildId);
 }
@@ -252,11 +275,20 @@ function cleanupSession(guildId: string): void {
 export function setQueue(guildId: string, trackIds: string[]): void {
   const session = sessions.get(guildId);
   if (!session) return;
+  // Preserve the currently-playing track across a reorder so audio keeps going
+  // and the now-playing highlight stays correct (the queue is rebuilt here but
+  // playback is NOT restarted).
+  const playingTrackId = session.currentIndex >= 0 ? session.queue[session.currentIndex]?.trackId : undefined;
   session.queue = trackIds.map(id => {
     const track = getTrack(id);
     return { trackId: id, title: track?.title || 'Unknown Track', duration: track?.duration || 0, requestedBy: session.adminUserId };
   });
-  session.currentIndex = 0;
+  if (playingTrackId) {
+    const idx = session.queue.findIndex(q => q.trackId === playingTrackId);
+    session.currentIndex = idx >= 0 ? idx : (session.queue.length > 0 ? 0 : -1);
+  } else {
+    session.currentIndex = session.queue.length > 0 ? 0 : -1;
+  }
 }
 
 export function addToQueue(guildId: string, trackId: string): void {
@@ -272,6 +304,8 @@ export function clearQueue(guildId: string): void {
   session.queue = [];
   session.currentIndex = -1;
   session.isPlaying = false;
+  session.positionMs = 0;
+  session.startedAtMs = Date.now();
   const player = players.get(guildId);
   if (player) player.stop();
 }
@@ -307,7 +341,7 @@ export function playNext(guildId: string): boolean {
   } else {
     session.currentIndex++;
     if (session.currentIndex >= session.queue.length) {
-      if (session.loop) { session.currentIndex = 0; }
+      if (session.repeatMode === 'all') { session.currentIndex = 0; }
       else { session.isPlaying = false; return false; }
     }
   }
@@ -327,9 +361,13 @@ export function togglePlayPause(guildId: string): boolean {
   const player = players.get(guildId);
   if (!session || !player) return false;
   if (player.state.status === AudioPlayerStatus.Playing) {
+    // Freeze the position offset at the moment we pause.
+    session.positionMs += Date.now() - session.startedAtMs;
     player.pause();
     session.isPlaying = false;
   } else if (player.state.status === AudioPlayerStatus.Paused) {
+    // Re-anchor wall-clock so the position keeps advancing from where it froze.
+    session.startedAtMs = Date.now();
     player.unpause();
     session.isPlaying = true;
   } else if (session.queue.length > 0 && session.currentIndex >= 0) {
@@ -342,12 +380,15 @@ export function setVolume(guildId: string, volume: number): void {
   const session = sessions.get(guildId);
   if (!session) return;
   session.volume = Math.max(0, Math.min(1, volume));
+  // Apply to the live resource so the change is audible immediately.
+  const resource = resources.get(guildId);
+  resource?.volume?.setVolume(session.volume);
 }
 
-export function setLoop(guildId: string, loop: boolean): void {
+export function setRepeatMode(guildId: string, mode: RepeatMode): void {
   const session = sessions.get(guildId);
   if (!session) return;
-  session.loop = loop;
+  session.repeatMode = mode;
 }
 
 export function setShuffle(guildId: string, shuffle: boolean): void {
@@ -433,12 +474,17 @@ function playTrackInSession(guildId: string, item: QueueItem, seekPosition?: num
     });
 
     resource.volume?.setVolume(session.volume);
+    resources.set(guildId, resource);
 
     // player.play() replaces the current resource. The old resource's stream
     // dying later won't affect the player since it already has a new resource.
     player.play(resource);
     session.isPlaying = true;
-    playStartedAt.set(guildId, Date.now());
+    const now = Date.now();
+    playStartedAt.set(guildId, now);
+    // Anchor the progress position at the seek target (or 0 for a fresh track).
+    session.positionMs = (seekPosition ?? 0) * 1000;
+    session.startedAtMs = now;
 
     ffmpeg.on('error', (err) => console.error('FFmpeg error:', err));
 
