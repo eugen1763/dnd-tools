@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { nanoid } from 'nanoid';
 
@@ -32,7 +32,24 @@ export interface MusicLibrary {
   categories: Category[];
 }
 
-function loadLibrary(): MusicLibrary {
+// ---------------------------------------------------------------------------
+// In-memory library cache.
+//
+// The library is loaded from disk ONCE at module init and then served entirely
+// from memory. Every read is a plain object access (no I/O); writes mutate the
+// in-memory object and schedule a debounced, atomic write-back to disk.
+//
+// Why: previously every exported function re-read and JSON.parsed the whole
+// metadata file synchronously on each call. That ran on the same event loop as
+// the Discord client, so a large queue (setQueue maps getTrack over every item)
+// could stall the loop long enough to miss Discord's 3s interaction-ack window,
+// making slash commands silently fail.
+//
+// Tradeoff: external edits to metadata.json while the process runs are no longer
+// picked up — this service is the single writer, so that is acceptable.
+// ---------------------------------------------------------------------------
+
+function loadLibraryFromDisk(): MusicLibrary {
   try {
     if (existsSync(METADATA_FILE)) {
       const data = readFileSync(METADATA_FILE, 'utf-8');
@@ -44,38 +61,67 @@ function loadLibrary(): MusicLibrary {
   return { tracks: [], categories: [] };
 }
 
-function saveLibrary(lib: MusicLibrary): void {
-  writeFileSync(METADATA_FILE, JSON.stringify(lib, null, 2), 'utf-8');
+const library: MusicLibrary = loadLibraryFromDisk();
+
+let writeTimer: ReturnType<typeof setTimeout> | null = null;
+let writePending = false;
+
+/** Schedule a debounced, atomic persist of the in-memory library. */
+function persist(): void {
+  writePending = true;
+  if (writeTimer) return; // already scheduled
+  writeTimer = setTimeout(flush, 250);
+}
+
+function flush(): void {
+  writeTimer = null;
+  if (!writePending) return;
+  writePending = false;
+  try {
+    const tmp = `${METADATA_FILE}.tmp`;
+    writeFileSync(tmp, JSON.stringify(library, null, 2), 'utf-8');
+    renameSync(tmp, METADATA_FILE); // atomic on the same filesystem
+  } catch (err) {
+    console.error('Failed to persist music metadata:', err);
+    writePending = true; // retry on next persist()
+  }
+}
+
+/** Force any pending write to disk immediately. Call on graceful shutdown. */
+export function flushNow(): void {
+  if (writeTimer) {
+    clearTimeout(writeTimer);
+    writeTimer = null;
+  }
+  flush();
 }
 
 /** Get all tracks */
 export function getAllTracks(): Track[] {
-  return loadLibrary().tracks;
+  return library.tracks;
 }
 
 /** Get all categories */
 export function getAllCategories(): Category[] {
-  return loadLibrary().categories;
+  return library.categories;
 }
 
 /** Get tracks in a category */
 export function getTracksByCategory(categoryId: string): Track[] {
-  const lib = loadLibrary();
-  const cat = lib.categories.find(c => c.id === categoryId);
+  const cat = library.categories.find(c => c.id === categoryId);
   if (!cat) return [];
   return cat.trackIds
-    .map(id => lib.tracks.find(t => t.id === id))
+    .map(id => library.tracks.find(t => t.id === id))
     .filter((t): t is Track => !!t);
 }
 
 /** Get a single track by id */
 export function getTrack(id: string): Track | undefined {
-  return loadLibrary().tracks.find(t => t.id === id);
+  return library.tracks.find(t => t.id === id);
 }
 
 /** Add a track (from download) */
 export function addTrack(track: Omit<Track, 'category' | 'addedAt' | 'favorite'> & { category?: string }): Track {
-  const lib = loadLibrary();
   const newTrack: Track = {
     id: track.id,
     title: track.title,
@@ -87,19 +133,19 @@ export function addTrack(track: Omit<Track, 'category' | 'addedAt' | 'favorite'>
     favorite: false,
   };
 
-  lib.tracks.push(newTrack);
+  library.tracks.push(newTrack);
 
   // Ensure the category exists
-  let cat = lib.categories.find(c => c.name === newTrack.category);
+  let cat = library.categories.find(c => c.name === newTrack.category);
   if (!cat) {
     cat = { id: nanoid(8), name: newTrack.category, trackIds: [] };
-    lib.categories.push(cat);
+    library.categories.push(cat);
   }
   if (!cat.trackIds.includes(newTrack.id)) {
     cat.trackIds.push(newTrack.id);
   }
 
-  saveLibrary(lib);
+  persist();
   return newTrack;
 }
 
@@ -108,13 +154,12 @@ export function addTracks(
   tracks: Omit<Track, 'category' | 'addedAt'>[],
   categoryName: string
 ): Track[] {
-  const lib = loadLibrary();
   const result: Track[] = [];
 
-  let cat = lib.categories.find(c => c.name === categoryName);
+  let cat = library.categories.find(c => c.name === categoryName);
   if (!cat) {
     cat = { id: nanoid(8), name: categoryName, trackIds: [] };
-    lib.categories.push(cat);
+    library.categories.push(cat);
   }
 
   for (const t of tracks) {
@@ -124,105 +169,99 @@ export function addTracks(
       addedAt: new Date().toISOString(),
       favorite: false,
     };
-    lib.tracks.push(newTrack);
+    library.tracks.push(newTrack);
     cat.trackIds.push(newTrack.id);
     result.push(newTrack);
   }
 
-  saveLibrary(lib);
+  persist();
   return result;
 }
 
 /** Remove a track by id */
 export function removeTrack(id: string): boolean {
-  const lib = loadLibrary();
-  const idx = lib.tracks.findIndex(t => t.id === id);
+  const idx = library.tracks.findIndex(t => t.id === id);
   if (idx === -1) return false;
 
-  const [track] = lib.tracks.splice(idx, 1);
+  library.tracks.splice(idx, 1);
 
   // Remove from all categories
-  for (const cat of lib.categories) {
+  for (const cat of library.categories) {
     cat.trackIds = cat.trackIds.filter(tid => tid !== id);
   }
 
   // Remove empty categories
-  lib.categories = lib.categories.filter(c => c.trackIds.length > 0);
+  library.categories = library.categories.filter(c => c.trackIds.length > 0);
 
-  saveLibrary(lib);
+  persist();
   return true;
 }
 
 /** Rename a category */
 export function renameCategory(categoryId: string, newName: string): boolean {
-  const lib = loadLibrary();
-  const cat = lib.categories.find(c => c.id === categoryId);
+  const cat = library.categories.find(c => c.id === categoryId);
   if (!cat) return false;
   cat.name = newName;
-  saveLibrary(lib);
+  persist();
   return true;
 }
 
 /** Delete a category (doesn't delete tracks) */
 export function deleteCategory(categoryId: string): boolean {
-  const lib = loadLibrary();
-  const idx = lib.categories.findIndex(c => c.id === categoryId);
+  const idx = library.categories.findIndex(c => c.id === categoryId);
   if (idx === -1) return false;
-  lib.categories.splice(idx, 1);
-  saveLibrary(lib);
+  library.categories.splice(idx, 1);
+  persist();
   return true;
 }
 
 /** Move track to a different category */
 export function moveTrack(trackId: string, newCategory: string): boolean {
-  const lib = loadLibrary();
-  const track = lib.tracks.find(t => t.id === trackId);
+  const track = library.tracks.find(t => t.id === trackId);
   if (!track) return false;
 
   // Remove from old category
-  for (const cat of lib.categories) {
+  for (const cat of library.categories) {
     cat.trackIds = cat.trackIds.filter(tid => tid !== trackId);
   }
 
   track.category = newCategory;
 
   // Ensure new category exists
-  let cat = lib.categories.find(c => c.name === newCategory);
+  let cat = library.categories.find(c => c.name === newCategory);
   if (!cat) {
     cat = { id: nanoid(8), name: newCategory, trackIds: [] };
-    lib.categories.push(cat);
+    library.categories.push(cat);
   }
   cat.trackIds.push(trackId);
 
   // Remove empty categories
-  lib.categories = lib.categories.filter(c => c.trackIds.length > 0);
+  library.categories = library.categories.filter(c => c.trackIds.length > 0);
 
-  saveLibrary(lib);
+  persist();
   return true;
 }
 
 /** Toggle favorite status */
 export function toggleFavorite(trackId: string): Track | undefined {
-  const lib = loadLibrary();
-  const track = lib.tracks.find(t => t.id === trackId);
+  const track = library.tracks.find(t => t.id === trackId);
   if (!track) return undefined;
   track.favorite = !track.favorite;
-  saveLibrary(lib);
+  persist();
   return track;
 }
 
 /** Get all favorite tracks */
 export function getFavoriteTracks(): Track[] {
-  return loadLibrary().tracks.filter(t => t.favorite);
+  return library.tracks.filter(t => t.favorite);
 }
 
 /** Create a new empty category */
 export function createCategory(name: string): Category | undefined {
   if (!name.trim()) return undefined;
-  const lib = loadLibrary();
-  if (lib.categories.find(c => c.name === name.trim())) return undefined;
+  if (library.categories.find(c => c.name === name.trim())) return undefined;
   const cat = { id: nanoid(8), name: name.trim(), trackIds: [] };
-  lib.categories.push(cat);
-  saveLibrary(lib);
+  library.categories.push(cat);
+  persist();
   return cat;
 }

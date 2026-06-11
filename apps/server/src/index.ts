@@ -7,10 +7,13 @@ import { createGame, getGame, addGuessToGame, LetterState, computeGuess } from '
 import { PORT } from './env';
 import { startBot } from './discord';
 import { musicApi } from './music-api';
+import { flushNow } from './music-store';
 
 const wordleDist = path.join(import.meta.dir, '../../../packages/wordle/dist');
 const wordleHtml = readFileSync(path.join(wordleDist, 'index.html'), 'utf-8');
 const webUiDir = path.join(import.meta.dir, '../webui');
+// Cache the music control UI at startup instead of re-reading it on every request.
+const musicHtml = readFileSync(path.join(webUiDir, 'index.html'), 'utf-8');
 
 const gameClients = new Map<string, Set<WebSocket>>();
 
@@ -150,8 +153,7 @@ const app = new Elysia()
     });
   })
   .get('/music', () => {
-    // Serve the music control UI
-    const musicHtml = readFileSync(path.join(webUiDir, 'index.html'), 'utf-8');
+    // Serve the cached music control UI
     return new Response(musicHtml, {
       headers: { 'Content-Type': 'text/html' }
     });
@@ -159,5 +161,15 @@ const app = new Elysia()
   .listen(PORT);
 
 console.log(`Server running at http://localhost:${PORT}`);
+
+// Flush any pending metadata write before the process exits (e.g. on a systemd
+// restart, which sends SIGTERM) so the debounced in-memory store isn't lost.
+function shutdown() {
+  flushNow();
+  process.exit(0);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+process.on('beforeExit', flushNow);
 
 startBot();
