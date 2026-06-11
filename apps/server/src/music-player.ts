@@ -45,6 +45,44 @@ const players = new Map<string, AudioPlayer>();
 const ffmpegProcesses = new Map<string, any>();
 const controlTokens = new Map<string, string>();
 
+// Playback resilience state (not part of the persisted/serialized session).
+const playStartedAt = new Map<string, number>();
+const failureState = new Map<string, { count: number; first: number; trackId: string }>();
+const MAX_FAILURES = 4;
+const FAILURE_WINDOW_MS = 10_000;
+const FAST_FAIL_MS = 1500;
+
+/** Terminate an ffmpeg child reliably: SIGTERM, then SIGKILL if it lingers. */
+function killFfmpeg(proc: any): void {
+  if (!proc || proc.killed) return;
+  try {
+    proc.kill('SIGTERM');
+    setTimeout(() => {
+      try { if (!proc.killed) proc.kill('SIGKILL'); } catch {}
+    }, 2000);
+  } catch {}
+}
+
+/**
+ * Record a playback failure for a guild. Returns true once the same track has
+ * failed MAX_FAILURES times within FAILURE_WINDOW_MS — the signal to stop
+ * instead of respawning ffmpeg in a tight loop (which previously leaked to OOM).
+ */
+function recordFailure(guildId: string, trackId: string): boolean {
+  const now = Date.now();
+  const fs = failureState.get(guildId);
+  if (!fs || fs.trackId !== trackId || now - fs.first > FAILURE_WINDOW_MS) {
+    failureState.set(guildId, { count: 1, first: now, trackId });
+    return false;
+  }
+  fs.count++;
+  return fs.count >= MAX_FAILURES;
+}
+
+function clearFailures(guildId: string): void {
+  failureState.delete(guildId);
+}
+
 export function generateControlToken(guildId: string): string {
   const token = nanoid(32);
   controlTokens.set(token, guildId);
@@ -121,13 +159,45 @@ export async function joinAndStartSession(
         entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
         entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
       ]);
+      // The connection is reconnecting on its own — wait for it to be Ready
+      // again, then re-subscribe the player so audio resumes.
+      await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+      const p = players.get(guildId);
+      if (p) connection.subscribe(p);
     } catch {
-      cleanupSession(guildId);
+      // Not recovering — tear down. destroy() fires the Destroyed handler,
+      // which performs the actual cleanup.
+      try { connection.destroy(); } catch {}
     }
   });
 
+  connection.on(VoiceConnectionStatus.Destroyed, () => {
+    const ff = ffmpegProcesses.get(guildId);
+    if (ff) killFfmpeg(ff);
+    cleanupSession(guildId);
+  });
+
   player.on(AudioPlayerStatus.Idle, () => {
+    const prev = ffmpegProcesses.get(guildId);
+    if (prev) killFfmpeg(prev);
     ffmpegProcesses.delete(guildId);
+
+    // An Idle that fires almost immediately after play() means the track
+    // failed (e.g. ffmpeg broken pipe), not that it finished. Guard against a
+    // respawn storm that would otherwise churn ffmpeg processes until OOM.
+    const item = state.queue[state.currentIndex];
+    const elapsed = Date.now() - (playStartedAt.get(guildId) ?? 0);
+    if (item && elapsed < FAST_FAIL_MS) {
+      if (recordFailure(guildId, item.trackId)) {
+        console.error(`Track ${item.trackId} failed ${MAX_FAILURES}x in guild ${guildId}; stopping playback.`);
+        state.isPlaying = false;
+        clearFailures(guildId);
+        return;
+      }
+    } else {
+      clearFailures(guildId);
+    }
+
     if (state.loop && state.currentIndex >= 0 && state.currentIndex < state.queue.length) {
       playTrackInSession(guildId, state.queue[state.currentIndex]);
     } else if (state.queue.length > 0) {
@@ -139,6 +209,13 @@ export async function joinAndStartSession(
 
   player.on('error', (error) => {
     console.error(`Audio player error in guild ${guildId}:`, error);
+    const item = state.queue[state.currentIndex];
+    if (item && recordFailure(guildId, item.trackId)) {
+      console.error(`Stopping playback in guild ${guildId} after repeated errors.`);
+      state.isPlaying = false;
+      clearFailures(guildId);
+      return;
+    }
     playNext(guildId);
   });
 
@@ -147,7 +224,7 @@ export async function joinAndStartSession(
 
 export async function leaveSession(guildId: string): Promise<void> {
   const ffmpeg = ffmpegProcesses.get(guildId);
-  if (ffmpeg) { ffmpeg.kill(); ffmpegProcesses.delete(guildId); }
+  if (ffmpeg) { killFfmpeg(ffmpeg); ffmpegProcesses.delete(guildId); }
 
   const player = players.get(guildId);
   if (player) { player.stop(); players.delete(guildId); }
@@ -157,6 +234,9 @@ export async function leaveSession(guildId: string): Promise<void> {
 
   const session = sessions.get(guildId);
   if (session) { invalidateToken(session.controlToken); sessions.delete(guildId); }
+
+  playStartedAt.delete(guildId);
+  failureState.delete(guildId);
 }
 
 function cleanupSession(guildId: string): void {
@@ -165,6 +245,8 @@ function cleanupSession(guildId: string): void {
   connections.delete(guildId);
   const session = sessions.get(guildId);
   if (session) { invalidateToken(session.controlToken); sessions.delete(guildId); }
+  playStartedAt.delete(guildId);
+  failureState.delete(guildId);
 }
 
 export function setQueue(guildId: string, trackIds: string[]): void {
@@ -286,7 +368,7 @@ export function seek(guildId: string, position: number): boolean {
 
   // Kill old ffmpeg (its stream will end, but player will already have a new resource)
   const old = ffmpegProcesses.get(guildId);
-  if (old) { old.kill(); ffmpegProcesses.delete(guildId); }
+  if (old) { killFfmpeg(old); ffmpegProcesses.delete(guildId); }
 
   // Start new ffmpeg at position — player.play() replaces the current resource
   return playTrackInSession(guildId, session.queue[session.currentIndex], position);
@@ -335,6 +417,13 @@ function playTrackInSession(guildId: string, item: QueueItem, seekPosition?: num
       'pipe:1',
     );
 
+    // Kill any ffmpeg still running for this guild before starting a new one.
+    // Without this, replacing a resource (seek, skip, auto-advance) orphans the
+    // previous ffmpeg, which on a degraded voice connection broken-pipes and
+    // lingers — the leak that drove the bot to OOM.
+    const prev = ffmpegProcesses.get(guildId);
+    if (prev) killFfmpeg(prev);
+
     const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
     ffmpegProcesses.set(guildId, ffmpeg);
 
@@ -349,6 +438,7 @@ function playTrackInSession(guildId: string, item: QueueItem, seekPosition?: num
     // dying later won't affect the player since it already has a new resource.
     player.play(resource);
     session.isPlaying = true;
+    playStartedAt.set(guildId, Date.now());
 
     ffmpeg.on('error', (err) => console.error('FFmpeg error:', err));
 

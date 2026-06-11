@@ -6,6 +6,14 @@ import { existsSync, mkdirSync } from 'fs';
 const YT_DLP = 'yt-dlp';
 const MUSIC_DIR = join(import.meta.dir, '../music/tracks');
 
+/** Append to a buffer string but keep only the last `max` bytes (the tail,
+ * where errors land). Prevents yt-dlp's verbose progress output from growing an
+ * unbounded in-memory string over a long download. */
+function appendCapped(buf: string, chunk: string, max = 64 * 1024): string {
+  const next = buf + chunk;
+  return next.length > max ? next.slice(next.length - max) : next;
+}
+
 if (!existsSync(MUSIC_DIR)) {
   mkdirSync(MUSIC_DIR, { recursive: true });
 }
@@ -60,7 +68,7 @@ export async function getVideoInfo(url: string): Promise<{ title: string; durati
     let stderr = '';
 
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-    proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+    proc.stderr.on('data', (chunk: Buffer) => { stderr = appendCapped(stderr, chunk.toString()); });
 
     proc.on('close', (code) => {
       if (code !== 0) {
@@ -105,7 +113,7 @@ export async function downloadVideo(url: string, onProgress?: (line: string) => 
     });
 
     proc.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
+      stderr = appendCapped(stderr, chunk.toString());
       // yt-dlp prints download progress to stderr
       if (onProgress) onProgress(chunk.toString());
     });
@@ -174,15 +182,15 @@ export async function downloadPlaylist(
   playlistUrl: string,
   onTrackProgress?: (index: number, total: number, title: string) => void
 ): Promise<{ playlistTitle: string; tracks: PlaylistItem[] }> {
-  // First get playlist metadata
+  // First get playlist metadata. Use a single delimited --print template so we
+  // get exactly one parseable line per entry. (Mixing --print with --dump-json
+  // interleaves a full JSON blob per entry and breaks line-based parsing — that
+  // was the bug that made every playlist track fail with a JSON-blob "URL".)
+  const SEP = '|||';
   const info = await new Promise<{ title: string; entries: { title: string; url: string; duration: number }[] }>((resolve, reject) => {
     const proc = spawn(YT_DLP, [
       '--flat-playlist',
-      '--print', '%(playlist_title)s',
-      '--print', '%(title)s',
-      '--print', '%(webpage_url)s',
-      '--print', '%(duration)s',
-      '--dump-json',
+      '--print', `%(playlist_title)s${SEP}%(title)s${SEP}%(url)s${SEP}%(duration)s`,
       playlistUrl,
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -190,22 +198,29 @@ export async function downloadPlaylist(
     let stderr = '';
 
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-    proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+    proc.stderr.on('data', (chunk: Buffer) => { stderr = appendCapped(stderr, chunk.toString()); });
 
     proc.on('close', (code) => {
-      if (code !== 0) reject(new Error(`yt-dlp playlist info failed: ${stderr}`));
+      if (code !== 0) {
+        reject(new Error(`yt-dlp playlist info failed: ${stderr}`));
+        return;
+      }
       const lines = stdout.trim().split('\n').filter(l => l.trim());
-      const playlistTitle = lines[0] || 'Unknown Playlist';
+      let playlistTitle = 'Unknown Playlist';
       const entries: { title: string; url: string; duration: number }[] = [];
 
-      for (let i = 1; i < lines.length; i += 3) {
-        if (i + 2 < lines.length) {
-          entries.push({
-            title: lines[i],
-            url: lines[i + 1],
-            duration: parseInt(lines[i + 2] || '0', 10),
-          });
-        }
+      for (const line of lines) {
+        const parts = line.split(SEP);
+        if (parts.length < 4) continue;
+        const [pTitle, title, url, durRaw] = parts;
+        if (pTitle && pTitle !== 'NA') playlistTitle = pTitle;
+        if (!url || url === 'NA') continue; // skip entries without a usable URL
+        const duration = parseInt(durRaw, 10);
+        entries.push({
+          title: title && title !== 'NA' ? title : 'Unknown',
+          url,
+          duration: Number.isFinite(duration) ? duration : 0,
+        });
       }
       resolve({ title: playlistTitle, entries });
     });
