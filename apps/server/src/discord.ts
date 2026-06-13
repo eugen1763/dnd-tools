@@ -21,19 +21,29 @@ function buildGameCommand() {
         .setName('type')
         .setDescription('Game type')
         .setRequired(true)
-        .addChoices({ name: 'wordle', value: 'wordle' })
+        .addChoices(
+          { name: 'wordle', value: 'wordle' },
+          { name: 'sabacc', value: 'sabacc' },
+        )
       )
       .addStringOption(opt => opt
         .setName('secret')
-        .setDescription('The word/number to guess')
-        .setRequired(true)
+        .setDescription('Wordle only: the word/number to guess')
+        .setRequired(false)
       )
       .addIntegerOption(opt => opt
         .setName('tries')
-        .setDescription('Number of allowed guesses')
+        .setDescription('Wordle only: number of allowed guesses')
         .setRequired(false)
         .setMinValue(1)
         .setMaxValue(20)
+      )
+      .addIntegerOption(opt => opt
+        .setName('ante')
+        .setDescription('Sabacc only: ante into the main pot (default 2)')
+        .setRequired(false)
+        .setMinValue(1)
+        .setMaxValue(1000)
       )
     );
 }
@@ -107,8 +117,23 @@ async function handleGameCommand(interaction: any) {
   await interaction.deferReply();
 
   const type = interaction.options.getString('type', true);
-  const secret = interaction.options.getString('secret', true);
+  if (type === 'sabacc') {
+    await createSabaccGame(interaction);
+  } else {
+    await createWordleGame(interaction);
+  }
+}
+
+async function createWordleGame(interaction: any) {
+  // `secret` is optional at the schema level (Sabacc doesn't use it), so enforce
+  // it here for Wordle.
+  const secret = interaction.options.getString('secret');
   const tries = interaction.options.getInteger('tries');
+
+  if (!secret) {
+    await interaction.editReply({ content: 'Wordle needs a `secret` word or number for players to guess.' });
+    return;
+  }
 
   try {
     const res = await fetch('http://localhost:3000/api/games', {
@@ -140,7 +165,42 @@ async function handleGameCommand(interaction: any) {
     await interaction.editReply({ embeds: [embed] });
   } catch (err) {
     console.error('Failed to create game:', err);
-    await interaction.editReply({ content: 'Failed to create game. Is the server running?' }).catch(e => console.error('editReply failed after game error:', e));
+    await interaction.editReply({ content: 'Failed to create game. Is the server running?' }).catch((e: unknown) => console.error('editReply failed after game error:', e));
+  }
+}
+
+async function createSabaccGame(interaction: any) {
+  const ante = interaction.options.getInteger('ante') ?? 2;
+
+  try {
+    const res = await fetch('http://localhost:3000/api/sabacc/games', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ anteMain: ante })
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      await interaction.editReply({ content: `Failed to create table: ${text}` });
+      return;
+    }
+
+    const game = await res.json() as { id: string; url: string };
+
+    const embed = new EmbedBuilder()
+      .setTitle('Corellian Spike Sabacc — Table Created!')
+      .setColor(0xF1C40F)
+      .addFields(
+        { name: 'Ante', value: `${ante} to the main pot (+1 to the Sabacc pot)`, inline: true },
+        { name: 'Players', value: '2–8', inline: true },
+        { name: 'Link', value: `${GAME_BASE_URL}${game.url}` }
+      )
+      .setFooter({ text: 'Open the link, enter your name & credits. First to join is the host.' });
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (err) {
+    console.error('Failed to create sabacc game:', err);
+    await interaction.editReply({ content: 'Failed to create table. Is the server running?' }).catch((e: unknown) => console.error('editReply failed after sabacc error:', e));
   }
 }
 

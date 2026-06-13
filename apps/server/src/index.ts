@@ -8,9 +8,15 @@ import { PORT } from './env';
 import { startBot } from './discord';
 import { musicApi } from './music-api';
 import { flushNow } from './music-store';
+import { sabaccApi } from './sabacc-api';
+import { sabaccWs } from './sabacc-ws';
 
 const wordleDist = path.join(import.meta.dir, '../../../packages/wordle/dist');
 const wordleHtml = readFileSync(path.join(wordleDist, 'index.html'), 'utf-8');
+const sabaccDist = path.join(import.meta.dir, '../../../packages/sabacc/dist');
+// Like the Wordle SPA, read the built Sabacc index.html once at startup (the
+// process will fail fast here if `bun run build:sabacc` hasn't been run).
+const sabaccHtml = readFileSync(path.join(sabaccDist, 'index.html'), 'utf-8');
 const webUiDir = path.join(import.meta.dir, '../webui');
 // Cache the music control UI at startup instead of re-reading it on every request.
 const musicHtml = readFileSync(path.join(webUiDir, 'index.html'), 'utf-8');
@@ -36,7 +42,15 @@ const app = new Elysia()
       prefix: '/wordle'
     })
   )
+  .use(
+    staticPlugin({
+      assets: sabaccDist,
+      prefix: '/sabacc'
+    })
+  )
   .use(musicApi)
+  .use(sabaccApi)
+  .use(sabaccWs)
   .ws('/ws/:gameId', {
     open(ws) {
       const { gameId } = ws.data.params as { gameId: string };
@@ -121,7 +135,7 @@ const app = new Elysia()
         <body style="font-family:system-ui;display:grid;place-items:center;min-height:100vh;margin:0;background:#1a1a2e;color:#eee">
           <div style="text-align:center">
             <h1>DnD Tools</h1>
-            <p>Wordle game server &amp; DnD Music Bot</p>
+            <p>Wordle &amp; Sabacc game server &amp; DnD Music Bot</p>
             <p><a href="/wordle" style="color:#57F287">Play Wordle</a></p>
             <p><a href="/music" style="color:#1DB954">Music Control</a></p>
           </div>
@@ -149,6 +163,11 @@ const app = new Elysia()
   })
   .get('/wordle/*', () => {
     return new Response(wordleHtml, {
+      headers: { 'Content-Type': 'text/html' }
+    });
+  })
+  .get('/sabacc/*', () => {
+    return new Response(sabaccHtml, {
       headers: { 'Content-Type': 'text/html' }
     });
   })

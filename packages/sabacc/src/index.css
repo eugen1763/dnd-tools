@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  color: #fafafa;
+  font-family: 'Geist Sans', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Deep-space felt table backdrop. */
+  background:
+    radial-gradient(120% 90% at 50% 0%, #173d2c 0%, #0d2a1e 45%, #07140e 100%);
+  overflow: hidden;
+}
+
+/* Shared 3D helpers (Tailwind has no first-class 3D utilities). */
+.scene-3d {
+  perspective: 1400px;
+}
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+.backface-hidden {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}

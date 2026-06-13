@@ -5,6 +5,9 @@
   "scripts": {
     "dev:wordle": "cd packages/wordle && bun run dev",
     "build:wordle": "cd packages/wordle && bun run build",
+    "dev:sabacc": "cd packages/sabacc && bun run dev",
+    "build:sabacc": "cd packages/sabacc && bun run build",
+    "build": "bun run build:wordle && bun run build:sabacc",
     "dev": "bun run --watch apps/server/src/index.ts",
     "start": "bun run apps/server/src/index.ts"
   }
