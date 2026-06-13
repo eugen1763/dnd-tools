@@ -67,9 +67,11 @@ async function registerCommandsInGuild(guild: any) {
   const gameCommand = buildGameCommand();
   const musicCommand = buildMusicCommand();
   try {
-    const existing = await guild.commands.fetch();
-    if (!existing.find(c => c.name === 'game')) await guild.commands.create(gameCommand);
-    if (!existing.find(c => c.name === 'music')) await guild.commands.create(musicCommand);
+    // Overwrite the guild's command set so schema changes (e.g. new subcommand
+    // choices/options) propagate on deploy. `set` upserts by name and is
+    // idempotent — unlike a guarded `create`, which never updates an existing
+    // command and would leave a stale schema in Discord.
+    await guild.commands.set([gameCommand, musicCommand]);
     console.log(`Registered commands in guild: ${guild.name} (${guild.id})`);
   } catch (err) {
     console.error(`Failed to register in guild ${guild.name}:`, err);
