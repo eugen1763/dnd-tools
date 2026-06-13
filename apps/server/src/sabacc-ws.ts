@@ -16,7 +16,6 @@ import {
   reclaimSeat,
   removePlayer,
   setConnected,
-  sweepEmptyGames,
 } from './sabacc-store';
 import {
   applyBetAction,
@@ -298,7 +297,9 @@ export const sabaccWs = new Elysia().ws('/ws/sabacc/:gameId', {
 
     if (clients && clients.size === 0) {
       clientsByGame.delete(gameId);
-      sweepEmptyGames();
+      // The last player left; setConnected(false) above stamped the idle clock.
+      // Actual deletion happens on the periodic sweep (index.ts) after the
+      // grace window, so a quick reconnect keeps the table.
     }
   },
 });

@@ -41,10 +41,22 @@ export function createGame(config?: Partial<SabaccConfig>): { id: string; url: s
     deltaSeq: 0,
     lastWinnerIds: [],
     lastWinDescription: null,
+    // Empty from birth, so an abandoned link (never joined) is also cleaned up.
+    emptySince: Date.now(),
   };
 
   games.set(id, game);
   return { id, url: `/sabacc/${id}` };
+}
+
+/**
+ * Recompute the idle clock: stamp `emptySince` the moment the last connected
+ * player leaves, and clear it as soon as anyone is connected again (so a
+ * reconnect within the grace window cancels cleanup).
+ */
+function recomputeEmpty(game: SabaccGame): void {
+  const anyConnected = game.players.some((p) => p.connected);
+  game.emptySince = anyConnected ? null : game.emptySince ?? Date.now();
 }
 
 export function getGame(id: string): SabaccGame | undefined {
@@ -114,6 +126,7 @@ export function addPlayer(gameId: string, rawName: string, rawCredits: number): 
 
   game.players.push(player);
   if (isFirst) game.hostId = id;
+  recomputeEmpty(game);
 
   return { player, token };
 }
@@ -125,6 +138,7 @@ export function reclaimSeat(gameId: string, token: string): Player | undefined {
   const player = game.players.find((p) => p.token === token);
   if (!player) return undefined;
   player.connected = true;
+  recomputeEmpty(game);
   return player;
 }
 
@@ -133,6 +147,7 @@ export function setConnected(gameId: string, playerId: string, connected: boolea
   if (!game) return;
   const player = game.players.find((p) => p.id === playerId);
   if (player) player.connected = connected;
+  recomputeEmpty(game);
 }
 
 /**
@@ -153,6 +168,7 @@ export function removePlayer(gameId: string, playerId: string): void {
     game.players = game.players.filter((p) => p.id !== playerId);
   }
   reassignHostIfNeeded(game);
+  recomputeEmpty(game);
 }
 
 /** Drop seats left empty by disconnected players who never reclaimed them. */
@@ -160,6 +176,7 @@ export function pruneDisconnectedBetweenHands(game: SabaccGame): void {
   if (handInProgress(game)) return;
   game.players = game.players.filter((p) => p.connected);
   reassignHostIfNeeded(game);
+  recomputeEmpty(game);
 }
 
 export function reassignHostIfNeeded(game: SabaccGame): void {
@@ -175,12 +192,11 @@ export function reassignHostIfNeeded(game: SabaccGame): void {
   }
 }
 
-/** Cheap sweep of abandoned games (no connected players), called opportunistically. */
-export function sweepEmptyGames(maxAgeMs = 6 * 60 * 60 * 1000): void {
+/** Delete tables that have sat empty (no connected players) longer than idleMs. */
+export function sweepIdleGames(idleMs = 30 * 60 * 1000): void {
   const now = Date.now();
   for (const [id, game] of games) {
-    const anyConnected = game.players.some((p) => p.connected);
-    if (!anyConnected && now - game.createdAt.getTime() > maxAgeMs) {
+    if (game.emptySince != null && now - game.emptySince > idleMs) {
       games.delete(id);
     }
   }

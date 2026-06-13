@@ -3,13 +3,14 @@ import { cors } from '@elysiajs/cors';
 import { staticPlugin } from '@elysiajs/static';
 import path from 'path';
 import { readFileSync } from 'fs';
-import { createGame, getGame, addGuessToGame, LetterState, computeGuess } from './store';
+import { createGame, getGame, addGuessToGame, LetterState, computeGuess, setGameOccupied, sweepIdleGames as sweepWordleGames } from './store';
 import { PORT } from './env';
 import { startBot } from './discord';
 import { musicApi } from './music-api';
 import { flushNow } from './music-store';
 import { sabaccApi } from './sabacc-api';
 import { sabaccWs } from './sabacc-ws';
+import { sweepIdleGames as sweepSabaccGames } from './sabacc-store';
 
 const wordleDist = path.join(import.meta.dir, '../../../packages/wordle/dist');
 const wordleHtml = readFileSync(path.join(wordleDist, 'index.html'), 'utf-8');
@@ -66,6 +67,7 @@ const app = new Elysia()
         gameClients.set(gameId, new Set());
       }
       gameClients.get(gameId)!.add(ws.raw);
+      setGameOccupied(gameId, true);
 
       ws.send(JSON.stringify({
         type: 'state',
@@ -119,6 +121,9 @@ const app = new Elysia()
         clients.delete(ws.raw);
         if (clients.size === 0) {
           gameClients.delete(gameId);
+          // Last client left; start the idle clock (deleted by the periodic
+          // sweep after the grace window unless someone reconnects).
+          setGameOccupied(gameId, false);
         } else {
           broadcastToGame(gameId, {
             type: 'player_count',
@@ -180,6 +185,15 @@ const app = new Elysia()
   .listen(PORT);
 
 console.log(`Server running at http://localhost:${PORT}`);
+
+// Periodically clear out Wordle/Sabacc games that have sat empty (no connected
+// clients) for over 30 minutes. Both stores stamp an idle clock when their last
+// client disconnects and clear it on reconnect, so a quick rejoin keeps a game.
+const IDLE_MS = 30 * 60 * 1000;
+setInterval(() => {
+  sweepWordleGames(IDLE_MS);
+  sweepSabaccGames(IDLE_MS);
+}, 5 * 60 * 1000);
 
 // Flush any pending metadata write before the process exits (e.g. on a systemd
 // restart, which sends SIGTERM) so the debounced in-memory store isn't lost.

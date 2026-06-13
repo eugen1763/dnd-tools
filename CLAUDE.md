@@ -94,10 +94,12 @@ the user as `/music?token=…`. The web UI sends that token in the
 the connection) invalidates the token.
 
 ### State & persistence (all in-memory; see exceptions)
-- **Wordle games** (`store.ts`): in-memory only — lost on restart.
-- **Sabacc tables** (`sabacc-store.ts`): in-memory only — lost on restart. No
-  persistence; abandoned tables are swept opportunistically when their last socket
-  closes.
+- **Wordle games** (`store.ts`) and **Sabacc tables** (`sabacc-store.ts`):
+  in-memory only — lost on restart. Both auto-clean: each game stamps an idle
+  clock (`emptySince`) when its last client disconnects and clears it on
+  reconnect; a periodic sweep in `index.ts` (every 5 min) deletes games idle
+  >30 min. The WS layers set occupancy (`setGameOccupied` for Wordle;
+  `recomputeEmpty` via the store mutators for Sabacc).
 - **Music sessions / connections / players / ffmpeg procs** (`music-player.ts`):
   separate in-memory `Map`s keyed by `guildId` — lost on restart.
 - **Music library** (track + category metadata, `music-store.ts`): loaded from

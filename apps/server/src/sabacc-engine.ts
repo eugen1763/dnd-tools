@@ -128,6 +128,10 @@ export interface SabaccGame {
   deltaSeq: number;
   lastWinnerIds: string[];
   lastWinDescription: string | null;
+
+  // Idle-cleanup bookkeeping (managed by the store, ignored by the engine):
+  // the timestamp when the last connected player left, or null while occupied.
+  emptySince?: number | null;
 }
 
 // --- Hand evaluation ---
