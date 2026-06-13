@@ -10,7 +10,7 @@ function ChipStack({ amount, color }: { amount: number; color: string }) {
       {Array.from({ length: chips }).map((_, i) => (
         <div
           key={i}
-          className="absolute left-0 h-2 w-8 rounded-[50%] border border-black/30"
+          className="absolute left-0 h-2 w-8 rounded-[50%] border border-black/40"
           style={{ bottom: i * 3, background: color }}
         />
       ))}
@@ -22,18 +22,18 @@ export function Pot({ pots }: { pots: PotType }) {
   return (
     <motion.div
       layout
-      className="flex items-end gap-5 rounded-2xl bg-black/30 px-5 py-3 ring-1 ring-emerald-300/15 backdrop-blur-sm"
+      className="flex items-end gap-5 rounded-2xl bg-ink-950/45 px-5 py-3 ring-1 ring-brass/20 backdrop-blur-sm"
     >
       <div className="flex flex-col items-center gap-1">
-        <ChipStack amount={pots.main} color="linear-gradient(#fbbf24,#d97706)" />
-        <span className="text-[0.6rem] uppercase tracking-widest text-emerald-200/60">Main Pot</span>
-        <CountUp value={pots.main} className="text-lg font-bold tabular-nums text-credit" />
+        <ChipStack amount={pots.main} color="linear-gradient(#f6cd86,#c98f1e)" />
+        <span className="text-[0.6rem] uppercase tracking-widest text-parchment/55">Main Pot</span>
+        <CountUp value={pots.main} className="font-display text-lg font-semibold tabular-nums text-credit" />
       </div>
-      <div className="h-12 w-px bg-emerald-300/15" />
+      <div className="h-12 w-px bg-brass/20" />
       <div className="flex flex-col items-center gap-1">
-        <ChipStack amount={pots.sabacc} color="linear-gradient(#38bdf8,#0369a1)" />
-        <span className="text-[0.6rem] uppercase tracking-widest text-sky-200/60">Sabacc Pot</span>
-        <CountUp value={pots.sabacc} className="text-lg font-bold tabular-nums text-sky-300" />
+        <ChipStack amount={pots.sabacc} color="linear-gradient(#e7a06a,#a85a32)" />
+        <span className="text-[0.6rem] uppercase tracking-widest text-[#e7a06a]/70">Sabacc Pot</span>
+        <CountUp value={pots.sabacc} className="font-display text-lg font-semibold tabular-nums text-[#e7a06a]" />
       </div>
     </motion.div>
   );

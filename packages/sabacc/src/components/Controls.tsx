@@ -14,10 +14,10 @@ function Btn({
   disabled?: boolean;
 }) {
   const tones: Record<string, string> = {
-    neutral: 'bg-emerald-700 hover:bg-emerald-600',
-    go: 'bg-emerald-500 hover:bg-emerald-400 text-emerald-950',
-    danger: 'bg-rose-700 hover:bg-rose-600',
-    gold: 'bg-amber-500 hover:bg-amber-400 text-amber-950',
+    neutral: 'bg-ink-700 hover:bg-ink-600 text-parchment',
+    go: 'bg-brass hover:bg-brass-light text-ink-950',
+    danger: 'bg-ember hover:bg-[#d56b53] text-ink-950',
+    gold: 'bg-brass-light hover:bg-[#ffd98f] text-ink-950',
   };
   return (
     <button
@@ -62,7 +62,7 @@ export function Controls({
     <motion.div
       initial={{ y: 40, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      className="pointer-events-auto flex flex-wrap items-center justify-center gap-2 rounded-2xl bg-black/55 px-4 py-3 ring-1 ring-emerald-300/25 backdrop-blur"
+      className="pointer-events-auto flex flex-wrap items-center justify-center gap-2 rounded-2xl bg-ink-950/70 px-4 py-3 ring-1 ring-brass/25 shadow-lamp backdrop-blur"
     >
       {card && (
         <>
@@ -101,16 +101,16 @@ export function Controls({
             </Btn>
           )}
           {(bet.includes('bet') || bet.includes('raise')) && maxTo > 0 && (
-            <div className="flex items-center gap-2 rounded-lg bg-black/30 px-3 py-1.5">
+            <div className="flex items-center gap-2 rounded-lg bg-ink-900/50 px-3 py-1.5">
               <input
                 type="range"
                 min={minTo}
                 max={Math.max(minTo, maxTo)}
                 value={amount}
                 onChange={(e) => setAmount(parseInt(e.target.value, 10))}
-                className="accent-amber-400"
+                className="accent-brass"
               />
-              <span className="w-10 text-center text-sm font-bold tabular-nums text-credit">{amount}</span>
+              <span className="w-10 text-center font-display text-sm font-semibold tabular-nums text-credit">{amount}</span>
               <Btn
                 tone="gold"
                 onClick={() =>

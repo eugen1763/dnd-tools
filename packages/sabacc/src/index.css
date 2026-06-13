@@ -11,14 +11,33 @@ body,
 body {
   margin: 0;
   padding: 0;
-  color: #fafafa;
+  color: #f1e4cd;
   font-family: 'Geist Sans', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Deep-space felt table backdrop. */
+  /* A dim, lamplit cantina back room: a warm amber glow pooling from above
+     over deep walnut/espresso shadow. */
   background:
-    radial-gradient(120% 90% at 50% 0%, #173d2c 0%, #0d2a1e 45%, #07140e 100%);
+    radial-gradient(115% 80% at 50% -8%, rgba(226, 169, 81, 0.22) 0%, rgba(226, 169, 81, 0.05) 32%, transparent 55%),
+    radial-gradient(100% 90% at 50% 12%, #2a1d12 0%, #1a120b 52%, #0f0a06 100%);
+  background-attachment: fixed;
   overflow: hidden;
+}
+
+/* Fine grain overlay for a cozy, tactile, lamplit texture. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+#root {
+  position: relative;
+  z-index: 1;
 }
 
 /* Shared 3D helpers (Tailwind has no first-class 3D utilities). */

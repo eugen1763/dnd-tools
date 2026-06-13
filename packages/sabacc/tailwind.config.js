@@ -3,30 +3,50 @@ export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      fontFamily: {
+        display: ['"Fraunces Variable"', 'Fraunces', 'Georgia', 'serif'],
+        sans: ['"Geist Sans"', 'system-ui', 'sans-serif'],
+      },
       colors: {
-        felt: {
-          900: '#0a1f17',
-          800: '#0d2a1e',
-          700: '#124030',
+        // Warm walnut/espresso room tones for backgrounds & surfaces.
+        ink: {
+          950: '#120c07',
+          900: '#1c140d',
+          800: '#271c12',
+          700: '#34261a',
+          600: '#443322',
         },
-        credit: '#f1c40f',
+        parchment: {
+          DEFAULT: '#f1e4cd',
+          dim: '#d6c4a3',
+          faint: '#b49f7e',
+        },
+        brass: {
+          DEFAULT: '#e2a951',
+          light: '#f6cd86',
+          dark: '#a9772f',
+        },
+        ember: '#c75b43', // warm terracotta red (negatives / danger)
+        oxblood: '#7d2b27',
+        credit: '#f4c54a',
       },
       boxShadow: {
-        glow: '0 0 0 2px rgba(241,196,15,0.9), 0 0 20px 2px rgba(241,196,15,0.45)',
+        glow: '0 0 0 2px rgba(226,169,81,0.9), 0 0 22px 3px rgba(226,169,81,0.4)',
+        lamp: '0 30px 80px -20px rgba(0,0,0,0.7)',
       },
       keyframes: {
         turnPulse: {
-          '0%, 100%': { boxShadow: '0 0 0 2px rgba(241,196,15,0.9), 0 0 14px 1px rgba(241,196,15,0.3)' },
-          '50%': { boxShadow: '0 0 0 2px rgba(241,196,15,1), 0 0 26px 4px rgba(241,196,15,0.6)' },
+          '0%, 100%': { boxShadow: '0 0 0 2px rgba(226,169,81,0.85), 0 0 14px 1px rgba(226,169,81,0.3)' },
+          '50%': { boxShadow: '0 0 0 2px rgba(246,205,134,1), 0 0 28px 5px rgba(226,169,81,0.6)' },
         },
         shiftFlash: {
           '0%': { opacity: '0' },
-          '20%': { opacity: '0.9' },
+          '20%': { opacity: '0.85' },
           '100%': { opacity: '0' },
         },
       },
       animation: {
-        turnPulse: 'turnPulse 1.4s ease-in-out infinite',
+        turnPulse: 'turnPulse 1.5s ease-in-out infinite',
         shiftFlash: 'shiftFlash 1s ease-out forwards',
       },
     },

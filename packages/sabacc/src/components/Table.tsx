@@ -55,23 +55,23 @@ export function Table() {
     <div className="scene-3d relative h-full w-full select-none overflow-hidden">
       {/* Top bar */}
       <div className="absolute left-0 right-0 top-0 z-20 flex items-center justify-between px-4 py-3">
-        <div className="text-sm text-emerald-100/80">
-          <span className="font-semibold">Sabacc</span>
-          {state.handNumber > 0 && <span className="text-emerald-100/50"> · Hand {state.handNumber}</span>}
+        <div className="text-sm text-parchment/85">
+          <span className="font-display text-base font-semibold tracking-wide text-brass-light">Sabacc</span>
+          {state.handNumber > 0 && <span className="text-parchment/45"> · Hand {state.handNumber}</span>}
         </div>
-        <div className="rounded-full bg-black/30 px-3 py-1 text-xs font-medium text-emerald-100/80 ring-1 ring-emerald-300/15">
+        <div className="rounded-full bg-ink-900/70 px-3 py-1 text-xs font-medium text-parchment/80 ring-1 ring-brass/20">
           {PHASE_LABEL[state.phase] ?? state.phase}
           {inPlay && state.round ? ` · Round ${state.round}/3` : ''}
         </div>
         <HandRankingsHelp />
       </div>
 
-      {/* Felt + seats */}
+      {/* Worn leather table + seats */}
       <div
-        className="absolute inset-x-2 bottom-2 top-14 rounded-[48%] border border-emerald-300/10"
+        className="absolute inset-x-2 bottom-2 top-14 rounded-[48%] border border-brass/15"
         style={{
-          background: 'radial-gradient(60% 60% at 50% 45%, #12422f 0%, #0b2a1d 70%, #081d14 100%)',
-          boxShadow: 'inset 0 0 80px rgba(0,0,0,0.55)',
+          background: 'radial-gradient(62% 62% at 50% 42%, #8a3f31 0%, #5e2823 52%, #3a1813 80%, #2a110f 100%)',
+          boxShadow: 'inset 0 0 90px rgba(0,0,0,0.6), inset 0 0 0 6px rgba(226,169,81,0.06)',
           transform: 'rotateX(6deg)',
         }}
       />
@@ -109,22 +109,22 @@ export function Table() {
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex flex-col items-center gap-2 rounded-2xl bg-black/45 px-6 py-4 text-center ring-1 ring-emerald-300/20"
+            className="flex flex-col items-center gap-2 rounded-2xl bg-ink-900/60 px-6 py-4 text-center ring-1 ring-brass/20 shadow-lamp"
           >
-            <span className="text-[0.65rem] uppercase tracking-[0.2em] text-emerald-200/70">Waiting to start</span>
-            <span className="text-sm text-emerald-100/80">
-              {state.players.length} player{state.players.length === 1 ? '' : 's'} seated
+            <span className="text-[0.65rem] uppercase tracking-[0.2em] text-brass/75">Waiting to start</span>
+            <span className="text-sm text-parchment/80">
+              {state.players.length} player{state.players.length === 1 ? '' : 's'} at the table
             </span>
             {youHost ? (
               <button
                 onClick={() => send?.({ type: 'start_hand' })}
                 disabled={!enoughPlayers}
-                className="rounded-lg bg-emerald-500 px-5 py-2 font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:opacity-40"
+                className="rounded-lg bg-brass px-5 py-2 font-semibold text-ink-950 transition hover:bg-brass-light disabled:opacity-40"
               >
                 {enoughPlayers ? 'Deal first hand' : 'Need 2+ players'}
               </button>
             ) : (
-              <span className="text-xs text-emerald-100/60">Waiting for the host…</span>
+              <span className="text-xs text-parchment/55">Waiting for the host…</span>
             )}
           </motion.div>
         )}
@@ -140,7 +140,7 @@ export function Table() {
         <div
           key={shiftNonce}
           className="animate-shiftFlash pointer-events-none absolute inset-0 z-40"
-          style={{ background: 'radial-gradient(circle at 50% 45%, rgba(241,196,15,0.5), transparent 60%)' }}
+          style={{ background: 'radial-gradient(circle at 50% 45%, rgba(226,169,81,0.5), transparent 60%)' }}
         />
       )}
 
@@ -151,7 +151,7 @@ export function Table() {
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
-            className="absolute left-1/2 top-16 z-50 -translate-x-1/2 rounded-lg bg-rose-700/90 px-4 py-2 text-sm shadow-lg"
+            className="absolute left-1/2 top-16 z-50 -translate-x-1/2 rounded-lg bg-ember px-4 py-2 text-sm text-ink-950 shadow-lg"
           >
             {errorMsg}
           </motion.div>

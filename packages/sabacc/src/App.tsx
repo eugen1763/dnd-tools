@@ -95,8 +95,8 @@ export default function App() {
   if (!gameId || gameId === 'sabacc') {
     return (
       <Centered>
-        <h1 className="text-2xl font-semibold">No table specified</h1>
-        <p className="mt-2 text-emerald-200/70">Create a Sabacc table from Discord with <code>/game create</code>.</p>
+        <h1 className="font-display text-2xl font-semibold text-brass-light">No table specified</h1>
+        <p className="mt-2 text-parchment/65">Create a Sabacc table from Discord with <code>/game create</code>.</p>
       </Centered>
     );
   }
@@ -104,7 +104,7 @@ export default function App() {
   if (!state) {
     return (
       <Centered>
-        <div className="animate-pulse text-emerald-200/80">{connected ? 'Loading table…' : 'Connecting…'}</div>
+        <div className="animate-pulse text-parchment/75">{connected ? 'Loading table…' : 'Connecting…'}</div>
       </Centered>
     );
   }
@@ -113,7 +113,7 @@ export default function App() {
     if (reconnecting) {
       return (
         <Centered>
-          <div className="animate-pulse text-emerald-200/80">Reclaiming your seat…</div>
+          <div className="animate-pulse text-parchment/75">Reclaiming your seat…</div>
         </Centered>
       );
     }

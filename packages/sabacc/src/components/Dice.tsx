@@ -17,7 +17,7 @@ function Die({ symbol, nonce, delay }: { symbol: DiceSymbol; nonce: number; dela
       initial={{ rotate: -120, scale: 0.6, opacity: 0.4 }}
       animate={{ rotate: 0, scale: 1, opacity: 1 }}
       transition={{ type: 'spring', stiffness: 260, damping: 14, delay }}
-      className="flex h-11 w-11 items-center justify-center rounded-lg bg-zinc-100 text-2xl text-zinc-900 shadow-md ring-1 ring-black/20"
+      className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#f3e7cf] text-2xl text-ink-900 shadow-md ring-1 ring-black/20"
     >
       {GLYPH[symbol]}
     </motion.div>
@@ -37,7 +37,7 @@ export function Dice({ dice, nonce }: { dice: DiceState; nonce: number }) {
           key={`match-${nonce}`}
           initial={{ scale: 0.5, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          className="rounded-full bg-amber-400/90 px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-widest text-amber-950"
+          className="rounded-full bg-brass px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-widest text-ink-950"
         >
           Sabacc Shift!
         </motion.span>

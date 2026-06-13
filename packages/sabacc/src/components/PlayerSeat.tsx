@@ -5,11 +5,11 @@ import { PlayingCard } from './PlayingCard';
 import type { PlayerView } from '../types';
 
 function StatusBadge({ player, isActor }: { player: PlayerView; isActor: boolean }) {
-  if (!player.connected) return <Tag className="bg-zinc-600/70">offline</Tag>;
-  if (player.status === 'folded') return <Tag className="bg-zinc-700/70">folded</Tag>;
-  if (player.status === 'allIn') return <Tag className="bg-amber-600/80">all-in</Tag>;
-  if (isActor) return <Tag className="bg-amber-400/90 text-amber-950">to act</Tag>;
-  if (player.stood) return <Tag className="bg-emerald-800/70">stood</Tag>;
+  if (!player.connected) return <Tag className="bg-ink-700/80 text-parchment/60">away</Tag>;
+  if (player.status === 'folded') return <Tag className="bg-ink-700/80 text-parchment/55">folded</Tag>;
+  if (player.status === 'allIn') return <Tag className="bg-ember/85 text-ink-950">all-in</Tag>;
+  if (isActor) return <Tag className="bg-brass text-ink-950">to act</Tag>;
+  if (player.stood) return <Tag className="bg-oxblood/70 text-parchment">stood</Tag>;
   return null;
 }
 
@@ -35,8 +35,8 @@ function FloatingDeltas({ playerId }: { playerId: string }) {
             exit={{ opacity: 0 }}
             transition={{ duration: 1.2, ease: 'easeOut' }}
             onAnimationComplete={() => dismiss(d.id)}
-            className={`absolute whitespace-nowrap text-base font-bold tabular-nums drop-shadow ${
-              d.amount >= 0 ? 'text-emerald-300' : 'text-rose-300'
+            className={`absolute whitespace-nowrap font-display text-base font-semibold tabular-nums drop-shadow ${
+              d.amount >= 0 ? 'text-brass-light' : 'text-ember'
             }`}
           >
             {d.amount >= 0 ? '+' : ''}
@@ -106,31 +106,31 @@ export function PlayerSeat({
         animate={isActor ? { scale: 1.04 } : { scale: 1 }}
         className={`relative min-w-[7.5rem] rounded-xl px-3 py-1.5 text-center ring-1 ${
           isWinner
-            ? 'bg-amber-500/20 ring-amber-300'
+            ? 'bg-brass/20 ring-brass'
             : isActor
-            ? 'bg-black/40 ring-amber-300 animate-turnPulse'
-            : 'bg-black/35 ring-emerald-300/15'
+            ? 'bg-ink-900/60 ring-brass animate-turnPulse'
+            : 'bg-ink-900/55 ring-brass/15'
         }`}
       >
         {isDealer && (
-          <span className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-100 text-[0.6rem] font-bold text-zinc-900 ring-1 ring-black/30">
+          <span className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-parchment text-[0.6rem] font-bold text-ink-900 ring-1 ring-brass/40">
             D
           </span>
         )}
         <div className="flex items-center justify-center gap-1">
-          <span className="max-w-[7rem] truncate text-sm font-semibold">
+          <span className="max-w-[7rem] truncate text-sm font-semibold text-parchment">
             {player.name}
-            {isYou && <span className="text-emerald-300/70"> (you)</span>}
+            {isYou && <span className="text-brass/80"> (you)</span>}
           </span>
           {player.isHost && <span title="Host" className="text-[0.7rem]">👑</span>}
         </div>
-        <div className="text-base font-bold tabular-nums text-credit">
-          <CountUp value={player.credits} /> <span className="text-[0.6rem] font-normal text-emerald-100/50">cr</span>
+        <div className="font-display text-base font-semibold tabular-nums text-credit">
+          <CountUp value={player.credits} /> <span className="text-[0.6rem] font-normal text-parchment/45">cr</span>
         </div>
         <div className="mt-0.5 flex min-h-[1rem] items-center justify-center gap-1">
           <StatusBadge player={player} isActor={isActor} />
           {player.currentBet > 0 && (
-            <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[0.6rem] font-semibold text-amber-200">
+            <span className="rounded-full bg-brass/15 px-2 py-0.5 text-[0.6rem] font-semibold text-brass-light">
               bet {player.currentBet}
             </span>
           )}
