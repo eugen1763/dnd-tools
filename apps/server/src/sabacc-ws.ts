@@ -38,6 +38,20 @@ interface SabaccClient {
 const clientsByGame = new Map<string, Set<SabaccClient>>();
 const clientByRaw = new WeakMap<object, SabaccClient>();
 
+/**
+ * Whether a table currently has any OPEN WebSocket connection (seated player or
+ * spectator). The idle sweep consults this so a game is never deleted while a
+ * socket is still attached.
+ */
+export function hasActiveClients(gameId: string): boolean {
+  const clients = clientsByGame.get(gameId);
+  if (!clients) return false;
+  for (const c of clients) {
+    if (c.raw && c.raw.readyState === 1 /* OPEN */) return true;
+  }
+  return false;
+}
+
 function send(raw: any, obj: unknown): void {
   try {
     if (raw && raw.readyState === 1 /* OPEN */) raw.send(JSON.stringify(obj));

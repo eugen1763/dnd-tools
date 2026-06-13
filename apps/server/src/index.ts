@@ -9,7 +9,7 @@ import { startBot } from './discord';
 import { musicApi } from './music-api';
 import { flushNow } from './music-store';
 import { sabaccApi } from './sabacc-api';
-import { sabaccWs } from './sabacc-ws';
+import { sabaccWs, hasActiveClients as hasSabaccClients } from './sabacc-ws';
 import { sweepIdleGames as sweepSabaccGames } from './sabacc-store';
 
 const wordleDist = path.join(import.meta.dir, '../../../packages/wordle/dist');
@@ -186,13 +186,20 @@ const app = new Elysia()
 
 console.log(`Server running at http://localhost:${PORT}`);
 
-// Periodically clear out Wordle/Sabacc games that have sat empty (no connected
-// clients) for over 30 minutes. Both stores stamp an idle clock when their last
-// client disconnects and clear it on reconnect, so a quick rejoin keeps a game.
+// Periodically clear out Wordle/Sabacc games that have sat empty for over 30
+// minutes. The sweeps are passed the live WebSocket registries as an explicit
+// guard: a game with ANY open socket is never deleted (and its idle clock is
+// reset), so a quick rejoin — or a lingering spectator — keeps a game alive.
 const IDLE_MS = 30 * 60 * 1000;
+const wordleHasClients = (id: string): boolean => {
+  const set = gameClients.get(id);
+  if (!set) return false;
+  for (const ws of set) if ((ws as any).readyState === 1 /* OPEN */) return true;
+  return false;
+};
 setInterval(() => {
-  sweepWordleGames(IDLE_MS);
-  sweepSabaccGames(IDLE_MS);
+  sweepWordleGames(IDLE_MS, wordleHasClients);
+  sweepSabaccGames(IDLE_MS, hasSabaccClients);
 }, 5 * 60 * 1000);
 
 // Flush any pending metadata write before the process exits (e.g. on a systemd

@@ -58,10 +58,25 @@ export function setGameOccupied(id: string, occupied: boolean): void {
   game.emptySince = occupied ? null : game.emptySince ?? Date.now();
 }
 
-/** Delete games that have sat empty (no connected clients) longer than idleMs. */
-export function sweepIdleGames(idleMs = 30 * 60 * 1000): void {
+/**
+ * Delete games that have sat empty longer than idleMs. When `hasConnections` is
+ * supplied (the live WebSocket registry) it is authoritative: a game with ANY
+ * open socket is never deleted (and its idle clock is reset); a game with no
+ * sockets has its clock (re)started so a missed disconnect can't strand it.
+ */
+export function sweepIdleGames(idleMs = 30 * 60 * 1000, hasConnections?: (id: string) => boolean): void {
   const now = Date.now();
   for (const [id, game] of games) {
+    if (hasConnections) {
+      if (hasConnections(id)) {
+        game.emptySince = null; // still occupied — never delete
+        continue;
+      }
+      if (game.emptySince == null) {
+        game.emptySince = now; // no sockets but clock wasn't running — start it
+        continue;
+      }
+    }
     if (game.emptySince != null && now - game.emptySince > idleMs) {
       games.delete(id);
     }

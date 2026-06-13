@@ -192,10 +192,25 @@ export function reassignHostIfNeeded(game: SabaccGame): void {
   }
 }
 
-/** Delete tables that have sat empty (no connected players) longer than idleMs. */
-export function sweepIdleGames(idleMs = 30 * 60 * 1000): void {
+/**
+ * Delete tables that have sat empty longer than idleMs. When `hasConnections` is
+ * supplied (the live WebSocket registry) it is authoritative: a table with ANY
+ * open socket is never deleted (and its idle clock is reset); a table with no
+ * sockets has its clock (re)started so a missed disconnect can't strand it.
+ */
+export function sweepIdleGames(idleMs = 30 * 60 * 1000, hasConnections?: (id: string) => boolean): void {
   const now = Date.now();
   for (const [id, game] of games) {
+    if (hasConnections) {
+      if (hasConnections(id)) {
+        game.emptySince = null; // still occupied — never delete
+        continue;
+      }
+      if (game.emptySince == null) {
+        game.emptySince = now; // no sockets but clock wasn't running — start it
+        continue;
+      }
+    }
     if (game.emptySince != null && now - game.emptySince > idleMs) {
       games.delete(id);
     }
