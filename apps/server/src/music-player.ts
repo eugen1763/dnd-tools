@@ -47,6 +47,10 @@ export interface PlayerState {
   // the live position is positionMs + (Date.now() - startedAtMs).
   positionMs: number;
   startedAtMs: number;
+  // Idle clock for the empty-channel sweep: set to Date.now() when the bot is
+  // alone in its voice channel, cleared (null) while a human is present. The
+  // sweep in discord.ts calls leaveSession once this exceeds the grace window.
+  emptySince: number | null;
 }
 
 /** Current playback position of a session in seconds (0 if nothing playing). */
@@ -70,6 +74,10 @@ const controlTokens = new Map<string, string>();
 // Playback resilience state (not part of the persisted/serialized session).
 const playStartedAt = new Map<string, number>();
 const failureState = new Map<string, { count: number; first: number; trackId: string }>();
+// Guards the Disconnected→rejoin backoff so overlapping stateChange events for
+// the same guild can't run concurrent wait+rejoin cycles (which would inflate
+// rejoinAttempts and trip the give-up cap prematurely).
+const reconnecting = new Set<string>();
 const MAX_FAILURES = 4;
 const FAILURE_WINDOW_MS = 10_000;
 const FAST_FAIL_MS = 1500;
@@ -86,18 +94,22 @@ function killFfmpeg(proc: any): void {
 }
 
 /**
- * Record a playback failure for a guild. Returns true once the same track has
- * failed MAX_FAILURES times within FAILURE_WINDOW_MS — the signal to stop
- * instead of respawning ffmpeg in a tight loop (which previously leaked to OOM).
+ * Record a playback failure for a guild. Returns true once playback has failed
+ * MAX_FAILURES times within FAILURE_WINDOW_MS — the signal to stop instead of
+ * respawning ffmpeg in a tight loop (which previously leaked to OOM).
  */
 function recordFailure(guildId: string, trackId: string): boolean {
   const now = Date.now();
   const fs = failureState.get(guildId);
-  if (!fs || fs.trackId !== trackId || now - fs.first > FAILURE_WINDOW_MS) {
+  // Count consecutive fast failures within the window REGARDLESS of trackId, so a
+  // queue of several DISTINCT corrupt tracks (repeat='all'/shuffle) trips the
+  // guard too — not only the same track repeating under repeat='one'.
+  if (!fs || now - fs.first > FAILURE_WINDOW_MS) {
     failureState.set(guildId, { count: 1, first: now, trackId });
     return false;
   }
   fs.count++;
+  fs.trackId = trackId;
   return fs.count >= MAX_FAILURES;
 }
 
@@ -117,6 +129,11 @@ export function validateControlToken(token: string): string | null {
 
 export function getSession(guildId: string): PlayerState | undefined {
   return sessions.get(guildId);
+}
+
+/** All live sessions (used by the empty-channel idle sweep). */
+export function getAllSessions(): PlayerState[] {
+  return [...sessions.values()];
 }
 
 export function getSessionByToken(token: string): PlayerState | undefined {
@@ -142,6 +159,15 @@ export async function joinAndStartSession(
     adapterCreator: channel.guild.voiceAdapterCreator,
     selfDeaf: true,   // music bot never receives audio; lower bandwidth
     selfMute: false,
+  });
+
+  // Attach the 'error' listener BEFORE the join handshake. A networking error
+  // (e.g. EHOSTUNREACH from the voice UDP socket during voice-server selection)
+  // is emitted as 'error' on the connection; without a listener Node/Bun rethrows
+  // it as an uncaught exception and kills the whole process. entersState's own
+  // once() guards the await, but attaching here removes any listener-less window.
+  connection.on('error', (error: any) => {
+    console.error(`Voice connection error in guild ${guildId}:`, error?.message ?? error);
   });
 
   try {
@@ -174,6 +200,7 @@ export async function joinAndStartSession(
     shuffle: false,
     positionMs: 0,
     startedAtMs: 0,
+    emptySince: null,
   };
 
   sessions.set(guildId, state);
@@ -196,17 +223,26 @@ export async function joinAndStartSession(
           try { connection.destroy(); } catch {}
         }
       } else if (connection.rejoinAttempts < 5) {
-        // Recoverable network blip — back off and rejoin.
-        await wait((connection.rejoinAttempts + 1) * 5_000);
-        try { connection.rejoin(); } catch {}
+        // Recoverable network blip — back off and rejoin. Serialize per guild:
+        // stateChange can fire repeatedly (incl. Disconnected→Disconnected) and
+        // async listeners aren't awaited, so without this guard overlapping
+        // cycles each call rejoin() and inflate rejoinAttempts toward the cap.
+        if (!reconnecting.has(guildId)) {
+          reconnecting.add(guildId);
+          try {
+            await wait((connection.rejoinAttempts + 1) * 5_000);
+            try { connection.rejoin(); } catch {}
+          } finally {
+            reconnecting.delete(guildId);
+          }
+        }
       } else {
         try { connection.destroy(); } catch {}
       }
     } else if (newState.status === VoiceConnectionStatus.Destroyed) {
-      // Connection is gone for good — stop playback and clean up.
-      const p = players.get(guildId);
-      if (p) p.stop(true);
-      cleanupSession(guildId);
+      // Connection is gone for good — stop playback and clean up. The connection
+      // is already destroyed, so don't re-destroy it.
+      disposeSession(guildId, false);
     } else if (
       !readyLock &&
       (newState.status === VoiceConnectionStatus.Connecting || newState.status === VoiceConnectionStatus.Signalling)
@@ -226,20 +262,30 @@ export async function joinAndStartSession(
   });
 
   player.on(AudioPlayerStatus.Idle, () => {
+    // player.stop(true) (teardown) emits 'idle' SYNCHRONOUSLY. If this session has
+    // already been disposed, bail — otherwise we'd re-enter and spawn a fresh
+    // resource onto a connection that's being destroyed (fd/ffmpeg/player leak).
+    if (sessions.get(guildId) !== state || players.get(guildId) !== player) return;
+
     // Normal play uses no ffmpeg (Opus passthrough); the seek/volume path does,
     // so reap any lingering ffmpeg here defensively.
     const prev = ffmpegProcesses.get(guildId);
     if (prev) killFfmpeg(prev);
     ffmpegProcesses.delete(guildId);
 
-    // An Idle firing almost immediately after play() means the track failed
-    // (e.g. a corrupt file), not that it finished — guard against a respawn
-    // storm by stopping after repeated fast failures of the same track.
+    // An Idle firing almost immediately after play() usually means the track
+    // failed to load (e.g. a corrupt file), not that it finished — guard against
+    // a respawn storm by stopping after repeated fast failures. But a genuinely
+    // short clip that completes cleanly is NOT a failure, so only treat it as one
+    // when elapsed is far below the track's expected duration (unknown duration
+    // falls back to the time gate).
     const item = state.queue[state.currentIndex];
     const elapsed = Date.now() - (playStartedAt.get(guildId) ?? 0);
-    if (item && elapsed < FAST_FAIL_MS) {
-      if (recordFailure(guildId, item.trackId)) {
-        console.error(`Track ${item.trackId} failed ${MAX_FAILURES}x in guild ${guildId}; stopping playback.`);
+    const expectedMs = (item?.duration ?? 0) * 1000;
+    const looksFailed = !!item && elapsed < FAST_FAIL_MS && (expectedMs === 0 || elapsed < expectedMs * 0.5);
+    if (looksFailed) {
+      if (recordFailure(guildId, item!.trackId)) {
+        console.error(`Playback failed ${MAX_FAILURES}x within ${FAILURE_WINDOW_MS}ms in guild ${guildId}; stopping.`);
         state.isPlaying = false;
         clearFailures(guildId);
         return;
@@ -249,9 +295,18 @@ export async function joinAndStartSession(
     }
 
     if (state.repeatMode === 'one' && state.currentIndex >= 0 && state.currentIndex < state.queue.length) {
-      playTrackInSession(guildId, state.queue[state.currentIndex]);
+      // If the looped track's file vanished, stop rather than strand 'playing'.
+      if (!playTrackInSession(guildId, state.queue[state.currentIndex])) state.isPlaying = false;
     } else if (state.queue.length > 0) {
-      playNext(guildId);
+      // Advance, skipping any tracks that fail to load (deleted file / missing
+      // metadata) so a hole in the queue can't strand the session as 'playing'
+      // with no audio. Bounded by queue length; if nothing is playable, stop.
+      let started = false;
+      for (let i = 0; i < state.queue.length; i++) {
+        if (playNext(guildId)) { started = true; break; }
+        if (!state.isPlaying) break; // playNext hit end-of-queue (repeat off)
+      }
+      if (!started) state.isPlaying = false;
     } else {
       state.isPlaying = false;
     }
@@ -266,33 +321,39 @@ export async function joinAndStartSession(
   return { token, state };
 }
 
-export async function leaveSession(guildId: string): Promise<void> {
-  const ffmpeg = ffmpegProcesses.get(guildId);
-  if (ffmpeg) { killFfmpeg(ffmpeg); ffmpegProcesses.delete(guildId); }
-
-  const player = players.get(guildId);
-  if (player) { player.stop(true); players.delete(guildId); }
-
-  const connection = connections.get(guildId);
-  if (connection) { try { connection.destroy(); } catch {} connections.delete(guildId); }
-
+/**
+ * Single teardown path for a guild's session. Critically, it clears ALL state
+ * maps and invalidates the token BEFORE stopping the player — because
+ * AudioPlayer.stop(true) emits 'idle' synchronously, and the Idle handler's
+ * liveness guard must see a torn-down session so it bails instead of advancing
+ * and spawning a fresh resource onto a dying connection. ffmpeg is killed (not
+ * just dropped) so the seek/volume child can't be orphaned.
+ */
+function disposeSession(guildId: string, destroyConnection: boolean): void {
   const session = sessions.get(guildId);
-  if (session) { invalidateToken(session.controlToken); sessions.delete(guildId); }
+  const player = players.get(guildId);
+  const connection = connections.get(guildId);
+  const ffmpeg = ffmpegProcesses.get(guildId);
 
-  resources.delete(guildId);
-  playStartedAt.delete(guildId);
-  failureState.delete(guildId);
-}
-
-function cleanupSession(guildId: string): void {
-  ffmpegProcesses.delete(guildId);
+  // 1) Remove state first (so the synchronous Idle from stop() is a no-op).
+  sessions.delete(guildId);
   players.delete(guildId);
   connections.delete(guildId);
-  const session = sessions.get(guildId);
-  if (session) { invalidateToken(session.controlToken); sessions.delete(guildId); }
+  ffmpegProcesses.delete(guildId);
   resources.delete(guildId);
   playStartedAt.delete(guildId);
   failureState.delete(guildId);
+  reconnecting.delete(guildId);
+  if (session) invalidateToken(session.controlToken);
+
+  // 2) Now reap the real resources.
+  if (ffmpeg) killFfmpeg(ffmpeg);
+  if (player) { try { player.stop(true); } catch {} }
+  if (connection && destroyConnection) { try { connection.destroy(); } catch {} }
+}
+
+export async function leaveSession(guildId: string): Promise<void> {
+  disposeSession(guildId, true);
 }
 
 export function setQueue(guildId: string, trackIds: string[]): void {

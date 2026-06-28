@@ -53,10 +53,27 @@ function loadLibraryFromDisk(): MusicLibrary {
   try {
     if (existsSync(METADATA_FILE)) {
       const data = readFileSync(METADATA_FILE, 'utf-8');
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      // Validate shape: valid-but-wrong-shape JSON (null, {}, missing arrays)
+      // parses fine but would TypeError later in the consumers. Treat it as
+      // corrupt and coerce to a clean library.
+      if (!parsed || !Array.isArray(parsed.tracks) || !Array.isArray(parsed.categories)) {
+        throw new Error('metadata.json is missing the expected tracks/categories arrays');
+      }
+      return parsed;
     }
   } catch (err) {
-    console.error('Failed to load music metadata, starting fresh:', err);
+    console.error('Failed to load music metadata:', err);
+    // Preserve the unparseable/invalid file before starting fresh — otherwise the
+    // first write atomically renames an empty library over it, destroying the
+    // catalog (titles, categories, favorites, file mapping) with no backup.
+    try {
+      const backup = `${METADATA_FILE}.corrupt-${Date.now()}`;
+      renameSync(METADATA_FILE, backup);
+      console.error(`Preserved corrupt metadata at ${backup}; starting with an empty library.`);
+    } catch (e) {
+      console.error('Could not preserve corrupt metadata file:', e);
+    }
   }
   return { tracks: [], categories: [] };
 }

@@ -59,6 +59,13 @@ interface DownloadJob {
 
 const downloadJobs = new Map<string, DownloadJob>();
 
+// Download throttling: cap concurrent yt-dlp(+ffmpeg) child pairs and dedup
+// in-flight URLs so rapid/scripted submits can't exhaust CPU/disk/FDs on the
+// shared process. activeDownloadUrls maps a URL to its live jobId.
+const activeDownloadUrls = new Map<string, string>();
+let activeDownloadCount = 0;
+const MAX_CONCURRENT_DOWNLOADS = 3;
+
 function cleanStaleJobs() {
   const now = Date.now();
   for (const [id, job] of downloadJobs) {
@@ -91,8 +98,15 @@ async function runDownload(jobId: string, url: string, category: string | undefi
       const result = await downloadPlaylist(url, (idx, total, title) => {
         updateJob(jobId, { progress: Math.round((idx / total) * 100), message: `Downloading ${idx}/${total}`, trackTitle: title || undefined, trackCount: total, currentTrack: idx });
       });
-      const tracks = addTracks(result.tracks.map(t => ({ id: t.id, title: t.title, url: t.url, duration: t.duration, filename: t.filename, favorite: false })), category || result.playlistTitle || 'Playlists');
-      updateJob(jobId, { status: 'completed', progress: 100, message: `Downloaded ${tracks.length} tracks`, trackCount: tracks.length });
+      // A playlist where every entry failed (geo-block, removed videos, yt-dlp
+      // breakage) must NOT report success — otherwise the UI shows a green toast
+      // for an empty import.
+      if (result.tracks.length === 0) {
+        updateJob(jobId, { status: 'error', error: 'No tracks could be downloaded from this playlist', message: 'Download failed', trackCount: 0 });
+      } else {
+        const tracks = addTracks(result.tracks.map(t => ({ id: t.id, title: t.title, url: t.url, duration: t.duration, filename: t.filename, favorite: false })), category || result.playlistTitle || 'Playlists');
+        updateJob(jobId, { status: 'completed', progress: 100, message: `Downloaded ${tracks.length} tracks`, trackCount: tracks.length });
+      }
     } else {
       const result = await downloadVideo(url, (line) => {
         const pct = parseProgressPct(line);
@@ -103,6 +117,11 @@ async function runDownload(jobId: string, url: string, category: string | undefi
     }
   } catch (err) {
     updateJob(jobId, { status: 'error', error: err instanceof Error ? err.message : String(err), message: 'Download failed' });
+  } finally {
+    // Release the concurrency slot and the in-flight dedup entry regardless of
+    // outcome (a watchdog timeout in youtube.ts surfaces here as a rejection).
+    activeDownloadCount = Math.max(0, activeDownloadCount - 1);
+    activeDownloadUrls.delete(url);
   }
 }
 
@@ -183,16 +202,35 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
 
   // Start a download (returns job ID for progress polling)
   .post('/download', async ({ body, headers }) => {
-    const { url, category } = body as { url: string; category?: string };
     const token = headers['x-control-token'];
     if (!token) return { error: 'Missing x-control-token header' };
+    // Require a real session, like every other mutating endpoint — downloads
+    // spawn processes and write to disk, so a presence-only check is not enough.
+    const session = getSessionByToken(token);
+    if (!session) return { error: 'No active session' };
+
+    const { url, category } = body as { url: string; category?: string };
     if (!url) return { error: 'Missing url' };
 
     try {
       const parsed = parseYouTubeUrl(url);
       const isPlaylist = parsed.type === 'playlist';
+
+      // Dedup: if this exact URL is already downloading, return the live job
+      // instead of spawning a duplicate (which would write a second copy).
+      const existingJobId = activeDownloadUrls.get(url);
+      if (existingJobId && downloadJobs.has(existingJobId)) {
+        return { ok: true, jobId: existingJobId, type: isPlaylist ? 'playlist' : 'track', deduped: true };
+      }
+      // Cap concurrent downloads so bursts can't exhaust the shared process.
+      if (activeDownloadCount >= MAX_CONCURRENT_DOWNLOADS) {
+        return { error: 'Too many downloads in progress. Please wait for one to finish.' };
+      }
+
       const jobId = createJob(isPlaylist ? 'playlist' : 'video', 'Starting download...');
-      runDownload(jobId, url, category || undefined, isPlaylist); // fire & forget
+      activeDownloadUrls.set(url, jobId);
+      activeDownloadCount++;
+      runDownload(jobId, url, category || undefined, isPlaylist); // fire & forget (slot released in its finally)
       return { ok: true, jobId, type: isPlaylist ? 'playlist' : 'track' };
     } catch (err) {
       return { error: `Failed to start download: ${err instanceof Error ? err.message : String(err)}` };

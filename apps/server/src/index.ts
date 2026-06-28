@@ -212,4 +212,18 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 process.on('beforeExit', flushNow);
 
+// Last-resort crash safety net. Everything (Discord bot + web API + games + music)
+// runs in this one process under systemd Restart=always, so a single unhandled
+// error would otherwise crash silently and lose all in-memory state. We patch
+// known emitters individually, but this catches anything missed. `beforeExit`
+// does NOT fire on an uncaught throw, so flush the (synchronous) metadata store
+// here too, otherwise a just-downloaded track in the 250ms debounce window is lost.
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+  try { flushNow(); } finally { process.exit(1); }
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
+});
+
 startBot();

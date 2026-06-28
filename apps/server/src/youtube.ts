@@ -6,6 +6,29 @@ import { existsSync, mkdirSync } from 'fs';
 const YT_DLP = 'yt-dlp';
 const MUSIC_DIR = join(import.meta.dir, '../music/tracks');
 
+// Watchdog timeouts (ms). A yt-dlp spawn settles only on 'close'/'error'; without
+// these a live-stream URL, a stalled fragment, or an interactive prompt would hang
+// the Promise forever, wedging the job and leaking the child.
+const INFO_TIMEOUT_MS = 60_000;
+const VIDEO_TIMEOUT_MS = 10 * 60_000;
+const PLAYLIST_INFO_TIMEOUT_MS = 3 * 60_000;
+// Refuse to fan a single playlist into an unbounded download run.
+const MAX_PLAYLIST_ENTRIES = 100;
+// Flags shared by every yt-dlp invocation: fail fast on network stalls, retry a
+// few times, and never try to download a live stream (which would download from
+// the live edge until the broadcast ends).
+const COMMON_YT_DLP_FLAGS = ['--socket-timeout', '30', '--retries', '3', '--match-filter', '!is_live'];
+
+/** Arm a watchdog that SIGTERM→SIGKILLs a hung child and reject()s. Returns the
+ *  timer so the caller can clearTimeout() it once the child settles normally. */
+function armWatchdog(proc: any, ms: number, reject: (err: Error) => void, label: string): ReturnType<typeof setTimeout> {
+  return setTimeout(() => {
+    try { proc.kill('SIGTERM'); } catch {}
+    setTimeout(() => { try { if (!proc.killed) proc.kill('SIGKILL'); } catch {} }, 2000);
+    reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`));
+  }, ms);
+}
+
 /** Append to a buffer string but keep only the last `max` bytes (the tail,
  * where errors land). Prevents yt-dlp's verbose progress output from growing an
  * unbounded in-memory string over a long download. */
@@ -61,16 +84,20 @@ export async function getVideoInfo(url: string): Promise<{ title: string; durati
       '--print', '%(title)s',
       '--print', '%(duration)s',
       '--no-download',
+      '--no-playlist',
+      ...COMMON_YT_DLP_FLAGS,
       url,
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let stdout = '';
     let stderr = '';
+    const watchdog = armWatchdog(proc, INFO_TIMEOUT_MS, reject, 'yt-dlp info');
 
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     proc.stderr.on('data', (chunk: Buffer) => { stderr = appendCapped(stderr, chunk.toString()); });
 
     proc.on('close', (code) => {
+      clearTimeout(watchdog);
       if (code !== 0) {
         reject(new Error(`yt-dlp info failed: ${stderr}`));
         return;
@@ -82,7 +109,7 @@ export async function getVideoInfo(url: string): Promise<{ title: string; durati
       });
     });
 
-    proc.on('error', reject);
+    proc.on('error', (err) => { clearTimeout(watchdog); reject(err); });
   });
 }
 
@@ -96,6 +123,8 @@ export async function downloadVideo(url: string, onProgress?: (line: string) => 
       '-x', // extract audio
       '--audio-format', 'opus',
       '--audio-quality', '0', // best quality
+      '--no-playlist', // a watch?v=…&list=… URL must not pull the whole list
+      ...COMMON_YT_DLP_FLAGS,
       '--print', 'after_move:%(title)s',
       '--print', 'after_move:%(duration)s',
       '--print', 'after_move:%(webpage_url)s',
@@ -105,6 +134,7 @@ export async function downloadVideo(url: string, onProgress?: (line: string) => 
 
     let stdout = '';
     let stderr = '';
+    const watchdog = armWatchdog(proc, VIDEO_TIMEOUT_MS, reject, 'yt-dlp download');
 
     proc.stdout.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
@@ -119,6 +149,7 @@ export async function downloadVideo(url: string, onProgress?: (line: string) => 
     });
 
     proc.on('close', (code) => {
+      clearTimeout(watchdog);
       if (code !== 0) {
         reject(new Error(`yt-dlp download failed (exit ${code}): ${stderr}`));
         return;
@@ -165,7 +196,7 @@ export async function downloadVideo(url: string, onProgress?: (line: string) => 
       });
     });
 
-    proc.on('error', reject);
+    proc.on('error', (err) => { clearTimeout(watchdog); reject(err); });
   });
 }
 
@@ -190,17 +221,20 @@ export async function downloadPlaylist(
   const info = await new Promise<{ title: string; entries: { title: string; url: string; duration: number }[] }>((resolve, reject) => {
     const proc = spawn(YT_DLP, [
       '--flat-playlist',
+      '--socket-timeout', '30',
       '--print', `%(playlist_title)s${SEP}%(title)s${SEP}%(url)s${SEP}%(duration)s`,
       playlistUrl,
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let stdout = '';
     let stderr = '';
+    const watchdog = armWatchdog(proc, PLAYLIST_INFO_TIMEOUT_MS, reject, 'yt-dlp playlist info');
 
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     proc.stderr.on('data', (chunk: Buffer) => { stderr = appendCapped(stderr, chunk.toString()); });
 
     proc.on('close', (code) => {
+      clearTimeout(watchdog);
       if (code !== 0) {
         reject(new Error(`yt-dlp playlist info failed: ${stderr}`));
         return;
@@ -224,14 +258,21 @@ export async function downloadPlaylist(
       }
       resolve({ title: playlistTitle, entries });
     });
-    proc.on('error', reject);
+    proc.on('error', (err) => { clearTimeout(watchdog); reject(err); });
   });
+
+  // Cap how many entries we fan out so a giant playlist (or a Mix/radio that
+  // reports thousands of entries) can't kick off an unbounded download run.
+  const entries = info.entries.slice(0, MAX_PLAYLIST_ENTRIES);
+  if (info.entries.length > MAX_PLAYLIST_ENTRIES) {
+    console.warn(`Playlist has ${info.entries.length} entries; capping at ${MAX_PLAYLIST_ENTRIES}.`);
+  }
 
   // Download each track sequentially
   const tracks: PlaylistItem[] = [];
-  for (let i = 0; i < info.entries.length; i++) {
-    const entry = info.entries[i];
-    onTrackProgress?.(i + 1, info.entries.length, entry.title || 'Unknown');
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    onTrackProgress?.(i + 1, entries.length, entry.title || 'Unknown');
     try {
       const result = await downloadVideo(entry.url);
       tracks.push({

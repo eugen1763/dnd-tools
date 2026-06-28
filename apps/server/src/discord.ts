@@ -1,6 +1,15 @@
 import { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, GuildMember, VoiceChannel, MessageFlags } from 'discord.js';
-import { DISCORD_TOKEN, MUSIC_CONTROL_BASE_URL, GAME_BASE_URL } from './env';
-import { joinAndStartSession, leaveSession, getSession } from './music-player';
+import { DISCORD_TOKEN, MUSIC_CONTROL_BASE_URL, GAME_BASE_URL, PORT } from './env';
+import { joinAndStartSession, leaveSession, getSession, getAllSessions } from './music-player';
+
+// The bot talks to its own HTTP server in-process; build the base URL from the
+// configured PORT (NOT a hardcoded 3000) so /game create works on any port.
+const INTERNAL_API_BASE = `http://localhost:${PORT}`;
+
+// Leave a voice channel that has had no human listeners for this long, so an
+// abandoned session (admin closed the tab and left without /music stop) doesn't
+// strand the bot in voice forever — mirrors the Wordle/Sabacc idle cleanup.
+const MUSIC_EMPTY_GRACE_MS = 5 * 60 * 1000;
 
 const client = new Client({
   intents: [
@@ -8,6 +17,34 @@ const client = new Client({
     GatewayIntentBits.GuildVoiceStates,
   ],
 });
+
+// Without these, an emitted Client 'error' would be an uncaught exception. In the
+// installed discord.js, gateway turbulence surfaces as 'shardError' (silently
+// dropped if unhandled) — log both so failures are visible, not invisible.
+client.on('error', (err) => console.error('Discord client error:', err));
+client.on('shardError', (err) => console.error('Discord shard error:', err));
+
+/** Periodically drop sessions whose voice channel has no human listeners. */
+function sweepEmptyMusicSessions() {
+  const now = Date.now();
+  for (const session of getAllSessions()) {
+    const guild = client.guilds.cache.get(session.guildId);
+    const channel = guild?.channels.cache.get(session.voiceChannelId);
+    // Couldn't resolve the channel (transient cache miss, or it was deleted —
+    // in which case the connection's Destroyed handler already cleans up). Leave
+    // the session untouched rather than risk tearing down a healthy one.
+    if (!channel || !channel.isVoiceBased()) continue;
+    const humans = channel.members.filter(m => !m.user.bot).size;
+    if (humans > 0) {
+      session.emptySince = null;
+    } else if (session.emptySince == null) {
+      session.emptySince = now;
+    } else if (now - session.emptySince > MUSIC_EMPTY_GRACE_MS) {
+      console.log(`Music session in guild ${session.guildId} empty for >${MUSIC_EMPTY_GRACE_MS / 60000}min; leaving voice.`);
+      leaveSession(session.guildId).catch(e => console.error('Idle leaveSession failed:', e));
+    }
+  }
+}
 
 function buildGameCommand() {
   return new SlashCommandBuilder()
@@ -90,6 +127,9 @@ async function setupCommands() {
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user?.tag}`);
   await setupCommands();
+  // Start the empty-channel idle sweep once we're connected and can resolve
+  // guild/voice state.
+  setInterval(sweepEmptyMusicSessions, 60 * 1000);
 });
 
 // Register commands when joining a new guild
@@ -138,7 +178,7 @@ async function createWordleGame(interaction: any) {
   }
 
   try {
-    const res = await fetch('http://localhost:3000/api/games', {
+    const res = await fetch(`${INTERNAL_API_BASE}/api/games`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ secret, tries: tries ?? undefined })
@@ -175,7 +215,7 @@ async function createSabaccGame(interaction: any) {
   const ante = interaction.options.getInteger('ante') ?? 2;
 
   try {
-    const res = await fetch('http://localhost:3000/api/sabacc/games', {
+    const res = await fetch(`${INTERNAL_API_BASE}/api/sabacc/games`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ anteMain: ante })
