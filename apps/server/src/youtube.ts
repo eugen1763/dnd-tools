@@ -29,6 +29,26 @@ function armWatchdog(proc: any, ms: number, reject: (err: Error) => void, label:
   }, ms);
 }
 
+/** The stdio streams are read directly; without an 'error' listener a stream
+ *  error (e.g. on kill) would be an unhandled exception. */
+function attachStdioErrorHandlers(proc: any): void {
+  proc.stdout?.on('error', () => {});
+  proc.stderr?.on('error', () => {});
+}
+
+/** Best-effort removal of any files yt-dlp wrote under this job's id prefix
+ *  (partial fragments, .part files) after a failed/killed download. */
+function cleanupPartials(id: string): void {
+  try {
+    const { readdirSync, unlinkSync } = require('fs');
+    for (const f of readdirSync(MUSIC_DIR) as string[]) {
+      if (f.startsWith(id)) {
+        try { unlinkSync(join(MUSIC_DIR, f)); } catch {}
+      }
+    }
+  } catch {}
+}
+
 /** Append to a buffer string but keep only the last `max` bytes (the tail,
  * where errors land). Prevents yt-dlp's verbose progress output from growing an
  * unbounded in-memory string over a long download. */
@@ -60,12 +80,15 @@ export function parseYouTubeUrl(url: string): { type: 'video' | 'playlist'; vide
   const watchMatch = url.match(/[?&]v=([a-zA-Z0-9_-]+)/);
   const listMatch = url.match(/[?&]list=([a-zA-Z0-9_-]+)/);
 
-  if (listMatch) {
-    return { type: 'playlist', playlistId: listMatch[1] };
-  }
-
+  // Prefer the video when a URL carries BOTH v= and list= (a watch link copied
+  // from inside a playlist, or a YouTube Mix/radio) so we don't surprise-download
+  // the entire list. A bare list= with no v= is a genuine playlist.
   if (watchMatch) {
     return { type: 'video', videoId: watchMatch[1] };
+  }
+
+  if (listMatch) {
+    return { type: 'playlist', playlistId: listMatch[1] };
   }
 
   // Handle youtube.com/playlist URLs
@@ -92,6 +115,7 @@ export async function getVideoInfo(url: string): Promise<{ title: string; durati
     let stdout = '';
     let stderr = '';
     const watchdog = armWatchdog(proc, INFO_TIMEOUT_MS, reject, 'yt-dlp info');
+    attachStdioErrorHandlers(proc);
 
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     proc.stderr.on('data', (chunk: Buffer) => { stderr = appendCapped(stderr, chunk.toString()); });
@@ -118,7 +142,7 @@ export async function downloadVideo(url: string, onProgress?: (line: string) => 
   const id = nanoid(12);
   const outputTemplate = join(MUSIC_DIR, `${id}.%(ext)s`);
 
-  return new Promise((resolve, reject) => {
+  const downloadPromise = new Promise<DownloadResult>((resolve, reject) => {
     const proc = spawn(YT_DLP, [
       '-x', // extract audio
       '--audio-format', 'opus',
@@ -135,6 +159,7 @@ export async function downloadVideo(url: string, onProgress?: (line: string) => 
     let stdout = '';
     let stderr = '';
     const watchdog = armWatchdog(proc, VIDEO_TIMEOUT_MS, reject, 'yt-dlp download');
+    attachStdioErrorHandlers(proc);
 
     proc.stdout.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
@@ -198,6 +223,11 @@ export async function downloadVideo(url: string, onProgress?: (line: string) => 
 
     proc.on('error', (err) => { clearTimeout(watchdog); reject(err); });
   });
+
+  // On any failure (non-zero exit, spawn error, or watchdog timeout) remove the
+  // partial/fragment files yt-dlp left behind so they don't accumulate on disk.
+  downloadPromise.catch(() => cleanupPartials(id));
+  return downloadPromise;
 }
 
 export interface PlaylistItem {
@@ -229,6 +259,7 @@ export async function downloadPlaylist(
     let stdout = '';
     let stderr = '';
     const watchdog = armWatchdog(proc, PLAYLIST_INFO_TIMEOUT_MS, reject, 'yt-dlp playlist info');
+    attachStdioErrorHandlers(proc);
 
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     proc.stderr.on('data', (chunk: Buffer) => { stderr = appendCapped(stderr, chunk.toString()); });

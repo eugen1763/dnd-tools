@@ -51,6 +51,9 @@ export interface PlayerState {
   // alone in its voice channel, cleared (null) while a human is present. The
   // sweep in discord.ts calls leaveSession once this exceeds the grace window.
   emptySince: number | null;
+  // Last user-visible playback error (e.g. ffmpeg unavailable for seek/volume),
+  // surfaced in the serialized state and cleared on the next successful play.
+  lastError: string | null;
 }
 
 /** Current playback position of a session in seconds (0 if nothing playing). */
@@ -78,6 +81,10 @@ const failureState = new Map<string, { count: number; first: number; trackId: st
 // the same guild can't run concurrent wait+rejoin cycles (which would inflate
 // rejoinAttempts and trip the give-up cap prematurely).
 const reconnecting = new Set<string>();
+// Guards against two concurrent /music start calls for the same guild both
+// passing the initial teardown and attaching duplicate listeners to one shared
+// VoiceConnection.
+const starting = new Set<string>();
 const MAX_FAILURES = 4;
 const FAILURE_WINDOW_MS = 10_000;
 const FAST_FAIL_MS = 1500;
@@ -151,6 +158,13 @@ export async function joinAndStartSession(
   channel: VoiceChannel,
 ): Promise<{ token: string; state: PlayerState }> {
   const guildId = channel.guild.id;
+  // Serialize startup per guild: joinVoiceChannel returns the SAME connection for
+  // an in-flight join, so two concurrent starts would attach duplicate listeners
+  // and leak a player. Reject the second until the first settles.
+  if (starting.has(guildId)) {
+    throw new Error('A music session is already starting for this server. Try again in a moment.');
+  }
+  starting.add(guildId);
   await leaveSession(guildId);
 
   const connection = joinVoiceChannel({
@@ -173,6 +187,7 @@ export async function joinAndStartSession(
   try {
     await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
   } catch {
+    starting.delete(guildId);
     connection.destroy();
     throw new Error('Failed to join voice channel. Make sure the bot has Connect permission and the channel is accessible.');
   }
@@ -201,6 +216,7 @@ export async function joinAndStartSession(
     positionMs: 0,
     startedAtMs: 0,
     emptySince: null,
+    lastError: null,
   };
 
   sessions.set(guildId, state);
@@ -318,6 +334,28 @@ export async function joinAndStartSession(
     console.error(`Audio player error in guild ${guildId}:`, error?.message ?? error);
   });
 
+  // The player AutoPauses when the connection has no healthy subscriber (a
+  // transient reconnect). Freeze the progress offset so the UI bar doesn't drift
+  // while no audio is actually flowing; it resumes from here when Playing returns.
+  player.on(AudioPlayerStatus.AutoPaused, () => {
+    if (sessions.get(guildId) !== state) return;
+    if (state.isPlaying) {
+      state.positionMs += Date.now() - state.startedAtMs;
+      state.isPlaying = false;
+    }
+  });
+
+  // Re-anchor when playback (re)starts — covers auto-resume after an AutoPause so
+  // position keeps advancing from where it froze rather than jumping.
+  player.on(AudioPlayerStatus.Playing, () => {
+    if (sessions.get(guildId) !== state) return;
+    if (!state.isPlaying) {
+      state.startedAtMs = Date.now();
+      state.isPlaying = true;
+    }
+  });
+
+  starting.delete(guildId);
   return { token, state };
 }
 
@@ -354,6 +392,11 @@ function disposeSession(guildId: string, destroyConnection: boolean): void {
 
 export async function leaveSession(guildId: string): Promise<void> {
   disposeSession(guildId, true);
+}
+
+/** Tear down every active session (used on graceful shutdown). */
+export function disposeAllSessions(): void {
+  for (const guildId of [...sessions.keys()]) disposeSession(guildId, true);
 }
 
 export function setQueue(guildId: string, trackIds: string[]): void {
@@ -397,8 +440,26 @@ export function clearQueue(guildId: string): void {
 export function removeFromQueue(guildId: string, index: number): boolean {
   const session = sessions.get(guildId);
   if (!session || index < 0 || index >= session.queue.length) return false;
+  const wasCurrent = index === session.currentIndex;
   session.queue.splice(index, 1);
-  if (session.currentIndex >= index) session.currentIndex--;
+
+  if (index < session.currentIndex) {
+    // Removed something before the playing track — shift the pointer to follow it.
+    session.currentIndex--;
+  } else if (wasCurrent) {
+    // Removed the track that's actually playing. Don't leave audio streaming a
+    // track no longer in the queue: advance to whatever now occupies the slot,
+    // or stop if the queue is now empty.
+    if (session.queue.length === 0) {
+      session.currentIndex = -1;
+      session.isPlaying = false;
+      const player = players.get(guildId);
+      if (player) player.stop();
+    } else {
+      if (session.currentIndex >= session.queue.length) session.currentIndex = session.queue.length - 1;
+      if (session.isPlaying) playTrackInSession(guildId, session.queue[session.currentIndex]);
+    }
+  }
   return true;
 }
 
@@ -420,8 +481,20 @@ export function playTrackById(guildId: string, trackId: string): boolean {
 export function playNext(guildId: string): boolean {
   const session = sessions.get(guildId);
   if (!session || session.queue.length === 0) return false;
-  if (session.shuffle) {
-    session.currentIndex = Math.floor(Math.random() * session.queue.length);
+  if (session.shuffle && session.queue.length > 1) {
+    // Pick a different track than the current one so shuffle doesn't replay the
+    // same song back-to-back.
+    let next = session.currentIndex;
+    while (next === session.currentIndex) next = Math.floor(Math.random() * session.queue.length);
+    session.currentIndex = next;
+  } else if (session.shuffle) {
+    // Single-track queue under shuffle: fall through to normal end-of-queue
+    // handling so repeat='off' can actually stop instead of looping forever.
+    session.currentIndex++;
+    if (session.currentIndex >= session.queue.length) {
+      if (session.repeatMode === 'all') { session.currentIndex = 0; }
+      else { session.isPlaying = false; return false; }
+    }
   } else {
     session.currentIndex++;
     if (session.currentIndex >= session.queue.length) {
@@ -454,6 +527,10 @@ export function togglePlayPause(guildId: string): boolean {
     session.startedAtMs = Date.now();
     player.unpause();
     session.isPlaying = true;
+  } else if (player.state.status === AudioPlayerStatus.AutoPaused) {
+    // Transient no-subscriber pause during a reconnect. Try to unpause in place;
+    // do NOT fall through to the restart-from-0 path below (which loses position).
+    player.unpause();
   } else if (session.queue.length > 0 && session.currentIndex >= 0) {
     return playTrackInSession(guildId, session.queue[session.currentIndex]);
   }
@@ -522,6 +599,7 @@ function playTrackInSession(guildId: string, item: QueueItem, seekPosition?: num
     return false;
   }
 
+  let readStream: any = null;
   try {
     // Reap any ffmpeg from a previous seek/volume resource before replacing it.
     const prev = ffmpegProcesses.get(guildId);
@@ -533,8 +611,9 @@ function playTrackInSession(guildId: string, item: QueueItem, seekPosition?: num
     let resource;
     if (!needsFfmpeg) {
       // Lossless Opus passthrough — no transcode, no encoder.
-      const stream = createReadStream(filePath);
-      resource = createAudioResource(stream, { inputType: StreamType.OggOpus });
+      readStream = createReadStream(filePath);
+      readStream.on('error', (err: any) => console.error(`Read stream error in guild ${guildId}:`, err?.message ?? err));
+      resource = createAudioResource(readStream, { inputType: StreamType.OggOpus });
     } else {
       // Seek and/or volume: let ffmpeg do the work in C and emit Ogg/Opus so we
       // never touch the (fragile, slow) JS Opus encoder. Copy packets when only
@@ -550,7 +629,17 @@ function playTrackInSession(guildId: string, item: QueueItem, seekPosition?: num
       args.push('-f', 'opus', '-loglevel', 'error', 'pipe:1');
       const ffmpeg = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
       ffmpegProcesses.set(guildId, ffmpeg);
-      ffmpeg.on('error', (err) => console.error('FFmpeg error:', err));
+      ffmpeg.on('error', (err) => {
+        console.error('FFmpeg error:', err);
+        // ffmpeg is required for seek/volume; if it can't run, surface it instead
+        // of silently leaving the controls a dead end with no audio.
+        session.lastError = 'Audio transcoder (ffmpeg) failed — seeking/volume is unavailable.';
+        session.isPlaying = false;
+      });
+      // stdout/stderr are read directly; without 'error' handlers a stream error
+      // (EPIPE on player stop) would be an unhandled exception.
+      ffmpeg.stdout.on('error', () => {});
+      ffmpeg.stderr.on('error', () => {});
       ffmpeg.stderr.on('data', (chunk: Buffer) => {
         const msg = chunk.toString().trim();
         if (msg) console.error('FFmpeg:', msg);
@@ -561,6 +650,7 @@ function playTrackInSession(guildId: string, item: QueueItem, seekPosition?: num
     resources.set(guildId, resource);
     player.play(resource);
     session.isPlaying = true;
+    session.lastError = null; // a successful (re)start clears any prior error
     const now = Date.now();
     playStartedAt.set(guildId, now);
     // Anchor the progress position at the seek target (or 0 for a fresh track).
@@ -569,6 +659,10 @@ function playTrackInSession(guildId: string, item: QueueItem, seekPosition?: num
     return true;
   } catch (err) {
     console.error('Failed to play track:', err);
+    // Don't leak the just-opened fd / spawned child if resource creation threw.
+    if (readStream) { try { readStream.destroy(); } catch {} }
+    const f = ffmpegProcesses.get(guildId);
+    if (f) { killFfmpeg(f); ffmpegProcesses.delete(guildId); }
     return false;
   }
 }

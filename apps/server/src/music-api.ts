@@ -149,6 +149,7 @@ function sessionToResponse(s: PlayerState) {
     repeatMode: s.repeatMode,
     shuffle: s.shuffle,
     position: getPositionSeconds(s),
+    error: s.lastError,
   };
 }
 
@@ -209,6 +210,7 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
     const session = getSessionByToken(token);
     if (!session) return { error: 'No active session' };
 
+    if (!body || typeof body !== 'object') return { error: 'Missing body' };
     const { url, category } = body as { url: string; category?: string };
     if (!url) return { error: 'Missing url' };
 
@@ -253,8 +255,10 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
     const session = getSessionByToken(token);
     if (!session) return { error: 'No active session' };
 
+    if (!body || typeof body !== 'object') return { error: 'Missing body' };
     const { trackIds } = body as { trackIds: string[] };
     if (!Array.isArray(trackIds)) return { error: 'trackIds must be an array' };
+    if (trackIds.length > 500) return { error: 'Too many tracks (max 500)' };
 
     setQueue(session.guildId, trackIds);
     return { ok: true, state: sessionToResponse(session) };
@@ -267,6 +271,7 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
     const session = getSessionByToken(token);
     if (!session) return { error: 'No active session' };
 
+    if (!body || typeof body !== 'object') return { error: 'Missing body' };
     const { trackId } = body as { trackId: string };
     if (!trackId) return { error: 'Missing trackId' };
 
@@ -308,7 +313,7 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
     const session = getSessionByToken(token);
     if (!session) return { error: 'No active session' };
 
-    const { trackId } = body as { trackId?: string };
+    const { trackId } = (body ?? {}) as { trackId?: string };
     if (trackId) {
       playTrackById(session.guildId, trackId);
     } else if (session.queue.length > 0) {
@@ -359,6 +364,7 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
     const session = getSessionByToken(token);
     if (!session) return { error: 'No active session' };
 
+    if (!body || typeof body !== 'object') return { error: 'Missing body' };
     const { volume } = body as { volume: number };
     if (typeof volume !== 'number' || volume < 0 || volume > 1) {
       return { error: 'Volume must be between 0 and 1' };
@@ -406,6 +412,7 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
     const session = getSessionByToken(token);
     if (!session) return { error: 'No active session' };
 
+    if (!body || typeof body !== 'object') return { error: 'Missing body' };
     const { position } = body as { position: number };
     if (typeof position !== 'number' || position < 0) return { error: 'Invalid position' };
 
@@ -446,6 +453,7 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
     const session = getSessionByToken(token);
     if (!session) return { error: 'No active session' };
 
+    if (!body || typeof body !== 'object') return { error: 'Missing body' };
     const { category } = body as { category: string };
     if (!category) return { error: 'Missing category' };
 
@@ -465,11 +473,9 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
     return { ok: true, track: trackToResponse(track) };
   })
 
-  // Get favorites
-  .get('/tracks/favorites', ({ headers }) => {
-    const token = headers['x-control-token'];
-    if (!token) return { error: 'Missing x-control-token header' };
-
+  // Get favorites. Library reads are public (the same data is reachable via
+  // /tracks), so don't pretend to gate this with a presence-only token check.
+  .get('/tracks/favorites', () => {
     return { ok: true, tracks: getFavoriteTracks().map(trackToResponse) };
   })
 
@@ -480,6 +486,7 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
     const session = getSessionByToken(token);
     if (!session) return { error: 'No active session' };
 
+    if (!body || typeof body !== 'object') return { error: 'Missing body' };
     const { name } = body as { name: string };
     if (!name) return { error: 'Missing name' };
 
@@ -495,6 +502,7 @@ export const musicApi = new Elysia({ prefix: '/api/music' })
     const session = getSessionByToken(token);
     if (!session) return { error: 'No active session' };
 
+    if (!body || typeof body !== 'object') return { error: 'Missing body' };
     const { name } = body as { name: string };
     if (!name) return { error: 'Missing name' };
 

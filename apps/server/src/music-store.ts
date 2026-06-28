@@ -90,6 +90,14 @@ function persist(): void {
   writeTimer = setTimeout(flush, 250);
 }
 
+/** Persist immediately and synchronously. Used for high-value additive mutations
+ *  (a freshly downloaded track) so they survive an abrupt crash within the 250ms
+ *  debounce window rather than being acknowledged but lost. */
+function persistNow(): void {
+  writePending = true;
+  flushNow();
+}
+
 function flush(): void {
   writeTimer = null;
   if (!writePending) return;
@@ -100,7 +108,10 @@ function flush(): void {
     renameSync(tmp, METADATA_FILE); // atomic on the same filesystem
   } catch (err) {
     console.error('Failed to persist music metadata:', err);
-    writePending = true; // retry on next persist()
+    writePending = true;
+    // Reschedule a retry so a transient failure (e.g. ENOSPC) self-heals instead
+    // of waiting for some unrelated future mutation to call persist() again.
+    if (!writeTimer) writeTimer = setTimeout(flush, 5000);
   }
 }
 
@@ -162,7 +173,7 @@ export function addTrack(track: Omit<Track, 'category' | 'addedAt' | 'favorite'>
     cat.trackIds.push(newTrack.id);
   }
 
-  persist();
+  persistNow();
   return newTrack;
 }
 
@@ -191,7 +202,7 @@ export function addTracks(
     result.push(newTrack);
   }
 
-  persist();
+  persistNow();
   return result;
 }
 

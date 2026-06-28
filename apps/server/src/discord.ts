@@ -28,20 +28,27 @@ client.on('shardError', (err) => console.error('Discord shard error:', err));
 function sweepEmptyMusicSessions() {
   const now = Date.now();
   for (const session of getAllSessions()) {
-    const guild = client.guilds.cache.get(session.guildId);
-    const channel = guild?.channels.cache.get(session.voiceChannelId);
-    // Couldn't resolve the channel (transient cache miss, or it was deleted —
-    // in which case the connection's Destroyed handler already cleans up). Leave
-    // the session untouched rather than risk tearing down a healthy one.
-    if (!channel || !channel.isVoiceBased()) continue;
-    const humans = channel.members.filter(m => !m.user.bot).size;
-    if (humans > 0) {
-      session.emptySince = null;
-    } else if (session.emptySince == null) {
-      session.emptySince = now;
-    } else if (now - session.emptySince > MUSIC_EMPTY_GRACE_MS) {
-      console.log(`Music session in guild ${session.guildId} empty for >${MUSIC_EMPTY_GRACE_MS / 60000}min; leaving voice.`);
-      leaveSession(session.guildId).catch(e => console.error('Idle leaveSession failed:', e));
+    // Guard per-session so a single resolution hiccup can't throw out of the
+    // timer callback and crash the process (there is no global uncaught handler
+    // that should be relied on for this).
+    try {
+      const guild = client.guilds.cache.get(session.guildId);
+      const channel = guild?.channels.cache.get(session.voiceChannelId);
+      // Couldn't resolve the channel (transient cache miss, or it was deleted —
+      // in which case the connection's Destroyed handler already cleans up). Leave
+      // the session untouched rather than risk tearing down a healthy one.
+      if (!channel || !channel.isVoiceBased()) continue;
+      const humans = channel.members.filter(m => !m.user.bot).size;
+      if (humans > 0) {
+        session.emptySince = null;
+      } else if (session.emptySince == null) {
+        session.emptySince = now;
+      } else if (now - session.emptySince > MUSIC_EMPTY_GRACE_MS) {
+        console.log(`Music session in guild ${session.guildId} empty for >${MUSIC_EMPTY_GRACE_MS / 60000}min; leaving voice.`);
+        leaveSession(session.guildId).catch(e => console.error('Idle leaveSession failed:', e));
+      }
+    } catch (e) {
+      console.error(`Empty-channel sweep failed for guild ${session.guildId}:`, e);
     }
   }
 }
@@ -354,4 +361,9 @@ export function startBot() {
   client.login(DISCORD_TOKEN).catch(err => {
     console.error('Failed to login to Discord:', err);
   });
+}
+
+/** Disconnect the Discord gateway cleanly on shutdown. */
+export function stopBot() {
+  try { client.destroy(); } catch {}
 }

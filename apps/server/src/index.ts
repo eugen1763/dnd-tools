@@ -5,8 +5,9 @@ import path from 'path';
 import { readFileSync } from 'fs';
 import { createGame, getGame, addGuessToGame, LetterState, computeGuess, setGameOccupied, sweepIdleGames as sweepWordleGames } from './store';
 import { PORT } from './env';
-import { startBot } from './discord';
+import { startBot, stopBot } from './discord';
 import { musicApi } from './music-api';
+import { disposeAllSessions } from './music-player';
 import { flushNow } from './music-store';
 import { sabaccApi } from './sabacc-api';
 import { sabaccWs, hasActiveClients as hasSabaccClients } from './sabacc-ws';
@@ -198,13 +199,23 @@ const wordleHasClients = (id: string): boolean => {
   return false;
 };
 setInterval(() => {
-  sweepWordleGames(IDLE_MS, wordleHasClients);
-  sweepSabaccGames(IDLE_MS, hasSabaccClients);
+  // Guard the sweep so a bug in game-cleanup logic degrades gracefully instead
+  // of throwing out of the timer and taking down the whole process.
+  try {
+    sweepWordleGames(IDLE_MS, wordleHasClients);
+    sweepSabaccGames(IDLE_MS, hasSabaccClients);
+  } catch (e) {
+    console.error('Idle game sweep failed:', e);
+  }
 }, 5 * 60 * 1000);
 
 // Flush any pending metadata write before the process exits (e.g. on a systemd
 // restart, which sends SIGTERM) so the debounced in-memory store isn't lost.
 function shutdown() {
+  // Tear down voice connections and child processes, and disconnect the gateway,
+  // so we don't leave a ghost in voice or orphaned children across a restart.
+  try { disposeAllSessions(); } catch (e) { console.error('Shutdown session teardown failed:', e); }
+  try { stopBot(); } catch {}
   flushNow();
   process.exit(0);
 }
